@@ -1,0 +1,487 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+  DELETED
+
+  @@map("record_status")
+}
+
+enum AttachmentRequirement {
+  REQUIRED
+  OPTIONAL
+  NOT_REQUIRED
+
+  @@map("attachment_requirement")
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  SUSPENDED
+  CLOSED
+  CANCELLED
+
+  @@map("project_status")
+}
+
+enum DailyLogStatus {
+  DRAFT
+  PENDING_REVIEW
+  OBSERVED
+  APPROVED
+  PDF_GENERATED
+  SIGNED
+  CLOSED
+  VOIDED
+
+  @@map("daily_log_status")
+}
+
+enum EventStatus {
+  DRAFT
+  SUBMITTED
+  OBSERVED
+  APPROVED
+  REJECTED
+  VOIDED
+
+  @@map("event_status")
+}
+
+enum SignatureType {
+  DRAWN
+  DIGITAL
+  CERTIFICATE
+  OTP
+
+  @@map("signature_type")
+}
+
+enum ApprovalAction {
+  APPROVED
+  REJECTED
+  OBSERVED
+
+  @@map("approval_action")
+}
+
+enum DocumentStorageProvider {
+  LOCAL
+  GOOGLE_DRIVE
+  S3
+  AZURE_BLOB
+
+  @@map("document_storage_provider")
+}
+
+enum DailyLogDocumentRole {
+  SUPPORT
+  GENERATED_PDF
+  SIGNED_PDF
+
+  @@map("daily_log_document_role")
+}
+
+enum PdfVersionStatus {
+  GENERATED
+  SIGNED
+  VOIDED
+
+  @@map("pdf_version_status")
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  SUBMIT
+  APPROVE
+  REJECT
+  OBSERVE
+  SIGN
+  UPLOAD_DOCUMENT
+  GENERATE_PDF
+  CLOSE
+  VOID
+
+  @@map("audit_action")
+}
+
+model Organization {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String       @db.VarChar(200)
+  nit       String?      @unique(map: "uq_organizations_nit") @db.VarChar(50)
+  email     String?      @db.VarChar(150)
+  phone     String?      @db.VarChar(50)
+  status    RecordStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  projects Project[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String       @id @default(uuid()) @db.Uuid
+  fullName       String       @map("full_name") @db.VarChar(200)
+  email          String       @unique(map: "uq_users_email") @db.VarChar(150)
+  phone          String?      @db.VarChar(50)
+  documentType   String?      @map("document_type") @db.VarChar(30)
+  documentNumber String?      @map("document_number") @db.VarChar(50)
+  passwordHash   String?      @map("password_hash")
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  createdProjects           Project[]            @relation("ProjectCreatedBy")
+  projectAssignments        ProjectUser[]        @relation("ProjectUserUser")
+  assignedProjectUsers      ProjectUser[]        @relation("ProjectUserAssignedBy")
+  createdDailyLogs          DailyLog[]           @relation("DailyLogCreatedBy")
+  reviewedDailyLogs         DailyLog[]           @relation("DailyLogReviewedBy")
+  approvedDailyLogs         DailyLog[]           @relation("DailyLogApprovedBy")
+  reportedEvents            Event[]              @relation("EventReportedBy")
+  changedEventVersions      EventVersion[]       @relation("EventVersionChangedBy")
+  eventSignatures           EventSignature[]     @relation("EventSignatureSignedBy")
+  dailyLogApprovals         DailyLogApproval[]   @relation("DailyLogApprovalApprover")
+  uploadedDocuments         Document[]           @relation("DocumentUploadedBy")
+  generatedPdfVersions      DailyLogPdfVersion[] @relation("DailyLogPdfVersionGeneratedBy")
+  performedAuditLogs        AuditLog[]           @relation("AuditLogPerformedBy")
+
+  @@unique([documentType, documentNumber], map: "uq_users_document")
+  @@map("users")
+}
+
+model Role {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique(map: "uq_roles_code") @db.VarChar(50)
+  name        String       @db.VarChar(100)
+  description String?
+  status      RecordStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+
+  rolePermissions RolePermission[]
+  projectUsers    ProjectUser[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique(map: "uq_permissions_code") @db.VarChar(80)
+  name        String       @db.VarChar(150)
+  description String?
+  status      RecordStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String   @id @default(uuid()) @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId], map: "uq_role_permissions")
+  @@map("role_permissions")
+}
+
+model Project {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  code           String        @db.VarChar(50)
+  name           String        @db.VarChar(200)
+  description    String?
+  location       String?
+  startDate      DateTime?     @map("start_date") @db.Date
+  endDate        DateTime?     @map("end_date") @db.Date
+  status         ProjectStatus @default(PLANNED)
+  createdById    String?       @map("created_by") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  createdBy    User?         @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  projectUsers ProjectUser[]
+  dailyLogs    DailyLog[]
+  events       Event[]
+  documents    Document[]
+
+  @@unique([organizationId, code], map: "uq_projects_org_code")
+  @@index([organizationId], map: "idx_projects_organization")
+  @@map("projects")
+}
+
+model ProjectUser {
+  id           String       @id @default(uuid()) @db.Uuid
+  projectId    String       @map("project_id") @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  roleId       String       @map("role_id") @db.Uuid
+  status       RecordStatus @default(ACTIVE)
+  assignedAt   DateTime     @default(now()) @map("assigned_at") @db.Timestamp(6)
+  assignedById String?      @map("assigned_by") @db.Uuid
+
+  project    Project @relation(fields: [projectId], references: [id])
+  user       User    @relation("ProjectUserUser", fields: [userId], references: [id])
+  role       Role    @relation(fields: [roleId], references: [id])
+  assignedBy User?   @relation("ProjectUserAssignedBy", fields: [assignedById], references: [id])
+
+  @@unique([projectId, userId, roleId], map: "uq_project_user_role")
+  @@index([projectId], map: "idx_project_users_project")
+  @@index([userId], map: "idx_project_users_user")
+  @@map("project_users")
+}
+
+model EventType {
+  id                    String                @id @default(uuid()) @db.Uuid
+  code                  String                @unique(map: "uq_event_types_code") @db.VarChar(80)
+  name                  String                @db.VarChar(150)
+  description           String?
+  attachmentRequirement AttachmentRequirement @default(OPTIONAL) @map("attachment_requirement")
+  requiresSignature     Boolean               @default(true) @map("requires_signature")
+  status                RecordStatus          @default(ACTIVE)
+  createdAt             DateTime              @default(now()) @map("created_at") @db.Timestamp(6)
+
+  events        Event[]
+  eventVersions EventVersion[]
+
+  @@map("event_types")
+}
+
+model DocumentType {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique(map: "uq_document_types_code") @db.VarChar(80)
+  name        String       @db.VarChar(150)
+  description String?
+  status      RecordStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+
+  documents Document[]
+
+  @@map("document_types")
+}
+
+model DailyLog {
+  id           String         @id @default(uuid()) @db.Uuid
+  projectId    String         @map("project_id") @db.Uuid
+  logDate      DateTime       @map("log_date") @db.Date
+  status       DailyLogStatus @default(DRAFT)
+  createdById  String         @map("created_by") @db.Uuid
+  reviewedById String?        @map("reviewed_by") @db.Uuid
+  approvedById String?        @map("approved_by") @db.Uuid
+  submittedAt  DateTime?      @map("submitted_at") @db.Timestamp(6)
+  reviewedAt   DateTime?      @map("reviewed_at") @db.Timestamp(6)
+  approvedAt   DateTime?      @map("approved_at") @db.Timestamp(6)
+  closedAt     DateTime?      @map("closed_at") @db.Timestamp(6)
+  comments     String?
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  project     Project              @relation(fields: [projectId], references: [id])
+  createdBy   User                 @relation("DailyLogCreatedBy", fields: [createdById], references: [id])
+  reviewedBy  User?                @relation("DailyLogReviewedBy", fields: [reviewedById], references: [id])
+  approvedBy  User?                @relation("DailyLogApprovedBy", fields: [approvedById], references: [id])
+  events      Event[]
+  approvals   DailyLogApproval[]
+  documents   DailyLogDocument[]
+  pdfVersions DailyLogPdfVersion[]
+
+  @@unique([projectId, logDate], map: "uq_daily_logs_project_date")
+  @@index([projectId, logDate], map: "idx_daily_logs_project_date")
+  @@index([status], map: "idx_daily_logs_status")
+  @@map("daily_logs")
+}
+
+model Event {
+  id                   String      @id @default(uuid()) @db.Uuid
+  dailyLogId           String      @map("daily_log_id") @db.Uuid
+  projectId            String      @map("project_id") @db.Uuid
+  eventTypeId          String      @map("event_type_id") @db.Uuid
+  activity             String
+  executionDescription String      @map("execution_description")
+  eventDatetime        DateTime    @map("event_datetime") @db.Timestamp(6)
+  reportedById         String      @map("reported_by") @db.Uuid
+  status               EventStatus @default(DRAFT)
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt            DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dailyLog    DailyLog         @relation(fields: [dailyLogId], references: [id])
+  project     Project          @relation(fields: [projectId], references: [id])
+  eventType   EventType        @relation(fields: [eventTypeId], references: [id])
+  reportedBy  User             @relation("EventReportedBy", fields: [reportedById], references: [id])
+  versions    EventVersion[]
+  signatures  EventSignature[]
+  documents   EventDocument[]
+
+  @@index([dailyLogId], map: "idx_events_daily_log")
+  @@index([projectId, eventDatetime], map: "idx_events_project_date")
+  @@index([reportedById], map: "idx_events_reported_by")
+  @@index([status], map: "idx_events_status")
+  @@map("events")
+}
+
+model EventVersion {
+  id                   String      @id @default(uuid()) @db.Uuid
+  eventId              String      @map("event_id") @db.Uuid
+  versionNumber        Int         @map("version_number")
+  eventTypeId          String      @map("event_type_id") @db.Uuid
+  activity             String
+  executionDescription String      @map("execution_description")
+  status               EventStatus
+  changedById          String      @map("changed_by") @db.Uuid
+  changeReason         String?     @map("change_reason")
+  createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamp(6)
+
+  event     Event     @relation(fields: [eventId], references: [id])
+  eventType EventType @relation(fields: [eventTypeId], references: [id])
+  changedBy User      @relation("EventVersionChangedBy", fields: [changedById], references: [id])
+
+  @@unique([eventId, versionNumber], map: "uq_event_versions")
+  @@map("event_versions")
+}
+
+model EventSignature {
+  id            String        @id @default(uuid()) @db.Uuid
+  eventId       String        @map("event_id") @db.Uuid
+  signedById    String        @map("signed_by") @db.Uuid
+  signatureType SignatureType @default(DRAWN) @map("signature_type")
+  signatureUrl  String?       @map("signature_url")
+  signatureHash String?       @map("signature_hash")
+  signedAt      DateTime      @default(now()) @map("signed_at") @db.Timestamp(6)
+  ipAddress     String?       @map("ip_address") @db.VarChar(80)
+  deviceInfo    String?       @map("device_info")
+
+  event    Event @relation(fields: [eventId], references: [id])
+  signedBy User  @relation("EventSignatureSignedBy", fields: [signedById], references: [id])
+
+  @@unique([eventId, signedById], map: "uq_event_signature")
+  @@map("event_signatures")
+}
+
+model DailyLogApproval {
+  id            String          @id @default(uuid()) @db.Uuid
+  dailyLogId    String          @map("daily_log_id") @db.Uuid
+  approverId    String          @map("approver_id") @db.Uuid
+  action        ApprovalAction
+  comments      String?
+  signatureType SignatureType?  @default(DRAWN) @map("signature_type")
+  signatureUrl  String?         @map("signature_url")
+  signatureHash String?         @map("signature_hash")
+  signedAt      DateTime?       @map("signed_at") @db.Timestamp(6)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamp(6)
+
+  dailyLog DailyLog @relation(fields: [dailyLogId], references: [id])
+  approver User     @relation("DailyLogApprovalApprover", fields: [approverId], references: [id])
+
+  @@map("daily_log_approvals")
+}
+
+model Document {
+  id                String                  @id @default(uuid()) @db.Uuid
+  projectId         String                  @map("project_id") @db.Uuid
+  documentTypeId    String                  @map("document_type_id") @db.Uuid
+  uploadedById      String                  @map("uploaded_by") @db.Uuid
+  title             String                  @db.VarChar(250)
+  description       String?
+  fileName          String                  @map("file_name") @db.VarChar(250)
+  fileUrl           String                  @map("file_url")
+  storageProvider   DocumentStorageProvider @default(LOCAL) @map("storage_provider")
+  mimeType          String?                 @map("mime_type") @db.VarChar(120)
+  fileSize          BigInt?                 @map("file_size")
+  fileHash          String?                 @map("file_hash")
+  version           Int                     @default(1)
+  status            RecordStatus            @default(ACTIVE)
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  project           Project              @relation(fields: [projectId], references: [id])
+  documentType      DocumentType         @relation(fields: [documentTypeId], references: [id])
+  uploadedBy        User                 @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
+  eventDocuments    EventDocument[]
+  dailyLogDocuments DailyLogDocument[]
+  pdfVersions       DailyLogPdfVersion[]
+
+  @@index([projectId], map: "idx_documents_project")
+  @@index([documentTypeId], map: "idx_documents_type")
+  @@map("documents")
+}
+
+model EventDocument {
+  id         String   @id @default(uuid()) @db.Uuid
+  eventId    String   @map("event_id") @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  event    Event    @relation(fields: [eventId], references: [id])
+  document Document @relation(fields: [documentId], references: [id])
+
+  @@unique([eventId, documentId], map: "uq_event_documents")
+  @@index([eventId], map: "idx_event_documents_event")
+  @@map("event_documents")
+}
+
+model DailyLogDocument {
+  id           String               @id @default(uuid()) @db.Uuid
+  dailyLogId   String               @map("daily_log_id") @db.Uuid
+  documentId   String               @map("document_id") @db.Uuid
+  documentRole DailyLogDocumentRole @default(SUPPORT) @map("document_role")
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamp(6)
+
+  dailyLog DailyLog @relation(fields: [dailyLogId], references: [id])
+  document Document @relation(fields: [documentId], references: [id])
+
+  @@unique([dailyLogId, documentId, documentRole], map: "uq_daily_log_documents")
+  @@index([dailyLogId], map: "idx_daily_log_documents_log")
+  @@map("daily_log_documents")
+}
+
+model DailyLogPdfVersion {
+  id            String           @id @default(uuid()) @db.Uuid
+  dailyLogId    String           @map("daily_log_id") @db.Uuid
+  documentId    String           @map("document_id") @db.Uuid
+  versionNumber Int              @map("version_number")
+  generatedById String           @map("generated_by") @db.Uuid
+  generatedAt   DateTime         @default(now()) @map("generated_at") @db.Timestamp(6)
+  status        PdfVersionStatus @default(GENERATED)
+
+  dailyLog    DailyLog @relation(fields: [dailyLogId], references: [id])
+  document    Document @relation(fields: [documentId], references: [id])
+  generatedBy User     @relation("DailyLogPdfVersionGeneratedBy", fields: [generatedById], references: [id])
+
+  @@unique([dailyLogId, versionNumber], map: "uq_daily_log_pdf_versions")
+  @@map("daily_log_pdf_versions")
+}
+
+model AuditLog {
+  id            String      @id @default(uuid()) @db.Uuid
+  entityName    String      @map("entity_name") @db.VarChar(100)
+  entityId      String      @map("entity_id") @db.Uuid
+  action        AuditAction
+  performedById String?     @map("performed_by") @db.Uuid
+  oldValue      Json?       @map("old_value") @db.JsonB
+  newValue      Json?       @map("new_value") @db.JsonB
+  ipAddress     String?     @map("ip_address") @db.VarChar(80)
+  deviceInfo    String?     @map("device_info")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamp(6)
+
+  performedBy User? @relation("AuditLogPerformedBy", fields: [performedById], references: [id])
+
+  @@index([entityName, entityId], map: "idx_audit_logs_entity")
+  @@index([performedById], map: "idx_audit_logs_performed_by")
+  @@index([createdAt], map: "idx_audit_logs_created_at")
+  @@map("audit_logs")
+}
