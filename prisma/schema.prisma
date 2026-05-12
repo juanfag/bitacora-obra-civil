@@ -142,19 +142,19 @@ model User {
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  createdProjects           Project[]            @relation("ProjectCreatedBy")
-  projectAssignments        ProjectUser[]        @relation("ProjectUserUser")
-  assignedProjectUsers      ProjectUser[]        @relation("ProjectUserAssignedBy")
-  createdDailyLogs          DailyLog[]           @relation("DailyLogCreatedBy")
-  reviewedDailyLogs         DailyLog[]           @relation("DailyLogReviewedBy")
-  approvedDailyLogs         DailyLog[]           @relation("DailyLogApprovedBy")
-  reportedEvents            Event[]              @relation("EventReportedBy")
-  changedEventVersions      EventVersion[]       @relation("EventVersionChangedBy")
-  eventSignatures           EventSignature[]     @relation("EventSignatureSignedBy")
-  dailyLogApprovals         DailyLogApproval[]   @relation("DailyLogApprovalApprover")
-  uploadedDocuments         Document[]           @relation("DocumentUploadedBy")
-  generatedPdfVersions      DailyLogPdfVersion[] @relation("DailyLogPdfVersionGeneratedBy")
-  performedAuditLogs        AuditLog[]           @relation("AuditLogPerformedBy")
+  createdProjects      Project[]            @relation("ProjectCreatedBy")
+  projectAssignments   ProjectUser[]        @relation("ProjectUserUser")
+  assignedProjectUsers ProjectUser[]        @relation("ProjectUserAssignedBy")
+  createdDailyLogs     DailyLog[]           @relation("DailyLogCreatedBy")
+  reviewedDailyLogs    DailyLog[]           @relation("DailyLogReviewedBy")
+  approvedDailyLogs    DailyLog[]           @relation("DailyLogApprovedBy")
+  reportedEvents       Event[]              @relation("EventReportedBy")
+  changedEventVersions EventVersion[]       @relation("EventVersionChangedBy")
+  eventSignatures      EventSignature[]     @relation("EventSignatureSignedBy")
+  dailyLogApprovals    DailyLogApproval[]   @relation("DailyLogApprovalApprover")
+  uploadedDocuments    Document[]           @relation("DocumentUploadedBy")
+  generatedPdfVersions DailyLogPdfVersion[] @relation("DailyLogPdfVersionGeneratedBy")
+  performedAuditLogs   AuditLog[]           @relation("AuditLogPerformedBy")
 
   @@unique([documentType, documentNumber], map: "uq_users_document")
   @@map("users")
@@ -319,13 +319,13 @@ model Event {
   createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt            DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  dailyLog    DailyLog         @relation(fields: [dailyLogId], references: [id])
-  project     Project          @relation(fields: [projectId], references: [id])
-  eventType   EventType        @relation(fields: [eventTypeId], references: [id])
-  reportedBy  User             @relation("EventReportedBy", fields: [reportedById], references: [id])
-  versions    EventVersion[]
-  signatures  EventSignature[]
-  documents   EventDocument[]
+  dailyLog   DailyLog         @relation(fields: [dailyLogId], references: [id])
+  project    Project          @relation(fields: [projectId], references: [id])
+  eventType  EventType        @relation(fields: [eventTypeId], references: [id])
+  reportedBy User             @relation("EventReportedBy", fields: [reportedById], references: [id])
+  versions   EventVersion[]
+  signatures EventSignature[]
+  documents  EventDocument[]
 
   @@index([dailyLogId], map: "idx_events_daily_log")
   @@index([projectId, eventDatetime], map: "idx_events_project_date")
@@ -373,16 +373,16 @@ model EventSignature {
 }
 
 model DailyLogApproval {
-  id            String          @id @default(uuid()) @db.Uuid
-  dailyLogId    String          @map("daily_log_id") @db.Uuid
-  approverId    String          @map("approver_id") @db.Uuid
+  id            String         @id @default(uuid()) @db.Uuid
+  dailyLogId    String         @map("daily_log_id") @db.Uuid
+  approverId    String         @map("approver_id") @db.Uuid
   action        ApprovalAction
   comments      String?
-  signatureType SignatureType?  @default(DRAWN) @map("signature_type")
-  signatureUrl  String?         @map("signature_url")
-  signatureHash String?         @map("signature_hash")
-  signedAt      DateTime?       @map("signed_at") @db.Timestamp(6)
-  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamp(6)
+  signatureType SignatureType? @default(DRAWN) @map("signature_type")
+  signatureUrl  String?        @map("signature_url")
+  signatureHash String?        @map("signature_hash")
+  signedAt      DateTime?      @map("signed_at") @db.Timestamp(6)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
 
   dailyLog DailyLog @relation(fields: [dailyLogId], references: [id])
   approver User     @relation("DailyLogApprovalApprover", fields: [approverId], references: [id])
@@ -391,22 +391,22 @@ model DailyLogApproval {
 }
 
 model Document {
-  id                String                  @id @default(uuid()) @db.Uuid
-  projectId         String                  @map("project_id") @db.Uuid
-  documentTypeId    String                  @map("document_type_id") @db.Uuid
-  uploadedById      String                  @map("uploaded_by") @db.Uuid
-  title             String                  @db.VarChar(250)
-  description       String?
-  fileName          String                  @map("file_name") @db.VarChar(250)
-  fileUrl           String                  @map("file_url")
-  storageProvider   DocumentStorageProvider @default(LOCAL) @map("storage_provider")
-  mimeType          String?                 @map("mime_type") @db.VarChar(120)
-  fileSize          BigInt?                 @map("file_size")
-  fileHash          String?                 @map("file_hash")
-  version           Int                     @default(1)
-  status            RecordStatus            @default(ACTIVE)
-  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt         DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id              String                  @id @default(uuid()) @db.Uuid
+  projectId       String                  @map("project_id") @db.Uuid
+  documentTypeId  String                  @map("document_type_id") @db.Uuid
+  uploadedById    String                  @map("uploaded_by") @db.Uuid
+  title           String                  @db.VarChar(250)
+  description     String?
+  fileName        String                  @map("file_name") @db.VarChar(250)
+  fileUrl         String                  @map("file_url")
+  storageProvider DocumentStorageProvider @default(LOCAL) @map("storage_provider")
+  mimeType        String?                 @map("mime_type") @db.VarChar(120)
+  fileSize        BigInt?                 @map("file_size")
+  fileHash        String?                 @map("file_hash")
+  version         Int                     @default(1)
+  status          RecordStatus            @default(ACTIVE)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   project           Project              @relation(fields: [projectId], references: [id])
   documentType      DocumentType         @relation(fields: [documentTypeId], references: [id])
