@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, ProjectStatus } from "@prisma/client";
+import { AuditService } from "../audit/audit.service";
+import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { UpdateProjectDto } from "./dto/update-project.dto";
@@ -14,9 +16,16 @@ type ProjectFilters = {
   status?: ProjectStatus;
 };
 
+type ProjectAccessContext = {
+  currentUserId: string;
+};
+
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async findAll(filters: ProjectFilters) {
     this.validateStatus(filters.status);
@@ -44,9 +53,13 @@ export class ProjectsService {
     return project;
   }
 
-  async create(createProjectDto: CreateProjectDto) {
+  async create(createProjectDto: CreateProjectDto, audit: AuditRequestContext) {
+    await this.ensureOrganizationExists(createProjectDto.organizationId);
+
+    const context: ProjectAccessContext = { currentUserId: audit.actorId };
+
     try {
-      return await this.prisma.project.create({
+      const project = await this.prisma.project.create({
         data: {
           organizationId: createProjectDto.organizationId,
           code: createProjectDto.code,
@@ -56,19 +69,36 @@ export class ProjectsService {
           startDate: this.toDate(createProjectDto.startDate),
           endDate: this.toDate(createProjectDto.endDate),
           status: createProjectDto.status,
-          createdById: createProjectDto.createdBy,
+          createdById: context.currentUserId,
         },
       });
+
+      await this.auditService.record({
+        ...audit,
+        action: "CREATE",
+        entity: "Project",
+        entityId: project.id,
+      });
+
+      return project;
     } catch (error) {
       this.handlePrismaError(error);
     }
   }
 
-  async update(id: string, updateProjectDto: UpdateProjectDto) {
+  async update(
+    id: string,
+    updateProjectDto: UpdateProjectDto,
+    audit: AuditRequestContext,
+  ) {
     await this.ensureExists(id);
 
+    if (updateProjectDto.organizationId) {
+      await this.ensureOrganizationExists(updateProjectDto.organizationId);
+    }
+
     try {
-      return await this.prisma.project.update({
+      const project = await this.prisma.project.update({
         where: { id },
         data: {
           organizationId: updateProjectDto.organizationId,
@@ -79,22 +109,42 @@ export class ProjectsService {
           startDate: this.toDate(updateProjectDto.startDate),
           endDate: this.toDate(updateProjectDto.endDate),
           status: updateProjectDto.status,
+          updatedById: audit.actorId,
         },
       });
+
+      await this.auditService.record({
+        ...audit,
+        action: "UPDATE",
+        entity: "Project",
+        entityId: project.id,
+      });
+
+      return project;
     } catch (error) {
       this.handlePrismaError(error);
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, audit: AuditRequestContext) {
     await this.ensureExists(id);
 
-    return this.prisma.project.update({
+    const project = await this.prisma.project.update({
       where: { id },
       data: {
         status: ProjectStatus.CANCELLED,
+        deletedById: audit.actorId,
       },
     });
+
+    await this.auditService.record({
+      ...audit,
+      action: "DELETE",
+      entity: "Project",
+      entityId: project.id,
+    });
+
+    return project;
   }
 
   private async ensureExists(id: string) {
@@ -105,6 +155,17 @@ export class ProjectsService {
 
     if (!project) {
       throw new NotFoundException("Project not found");
+    }
+  }
+
+  private async ensureOrganizationExists(organizationId: string) {
+    const organization = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true },
+    });
+
+    if (!organization) {
+      throw new BadRequestException("Invalid organizationId reference");
     }
   }
 

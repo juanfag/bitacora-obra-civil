@@ -81,6 +81,7 @@ $RECYCLE.BIN/
 *.pid
 *.seed
 *.pid.lock
+uploads/
 
 # Package manager caches
 .npm/

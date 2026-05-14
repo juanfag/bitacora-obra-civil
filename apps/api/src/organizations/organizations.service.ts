@@ -5,33 +5,34 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma, RecordStatus } from "@prisma/client";
+import { AuditService } from "../audit/audit.service";
+import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateOrganizationDto } from "./dto/create-organization.dto";
 import { UpdateOrganizationDto } from "./dto/update-organization.dto";
 
 type OrganizationFilters = {
   status?: RecordStatus;
-  code?: string;
+  nit?: string;
   name?: string;
 };
 
-type OrganizationRecord = Awaited<
-  ReturnType<PrismaService["organization"]["findUnique"]>
->;
-
 @Injectable()
 export class OrganizationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async findAll(filters: OrganizationFilters) {
     this.validateStatus(filters.status);
 
-    const organizations = await this.prisma.organization.findMany({
+    return this.prisma.organization.findMany({
       where: {
         status: filters.status,
-        nit: filters.code
+        nit: filters.nit
           ? {
-              contains: filters.code,
+              contains: filters.nit,
               mode: "insensitive",
             }
           : undefined,
@@ -46,8 +47,6 @@ export class OrganizationsService {
         createdAt: "desc",
       },
     });
-
-    return organizations.map((organization) => this.toResponse(organization));
   }
 
   async findOne(id: string) {
@@ -59,28 +58,43 @@ export class OrganizationsService {
       throw new NotFoundException("Organizacion no encontrada");
     }
 
-    return this.toResponse(organization);
+    return organization;
   }
 
-  async create(createOrganizationDto: CreateOrganizationDto) {
+  async create(
+    createOrganizationDto: CreateOrganizationDto,
+    audit: AuditRequestContext,
+  ) {
     try {
       const organization = await this.prisma.organization.create({
         data: {
           name: createOrganizationDto.name,
-          nit: this.resolveNit(createOrganizationDto),
+          nit: createOrganizationDto.nit,
           email: createOrganizationDto.email,
           phone: createOrganizationDto.phone,
           status: createOrganizationDto.status,
+          createdById: audit.actorId,
         },
       });
 
-      return this.toResponse(organization);
+      await this.auditService.record({
+        ...audit,
+        action: "CREATE",
+        entity: "Organization",
+        entityId: organization.id,
+      });
+
+      return organization;
     } catch (error) {
       this.handlePrismaError(error);
     }
   }
 
-  async update(id: string, updateOrganizationDto: UpdateOrganizationDto) {
+  async update(
+    id: string,
+    updateOrganizationDto: UpdateOrganizationDto,
+    audit: AuditRequestContext,
+  ) {
     await this.ensureExists(id);
 
     try {
@@ -88,31 +102,46 @@ export class OrganizationsService {
         where: { id },
         data: {
           name: updateOrganizationDto.name,
-          nit:
-            updateOrganizationDto.taxId ?? updateOrganizationDto.code ?? undefined,
+          nit: updateOrganizationDto.nit,
           email: updateOrganizationDto.email,
           phone: updateOrganizationDto.phone,
           status: updateOrganizationDto.status,
+          updatedById: audit.actorId,
         },
       });
 
-      return this.toResponse(organization);
+      await this.auditService.record({
+        ...audit,
+        action: "UPDATE",
+        entity: "Organization",
+        entityId: organization.id,
+      });
+
+      return organization;
     } catch (error) {
       this.handlePrismaError(error);
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, audit: AuditRequestContext) {
     await this.ensureExists(id);
 
     const organization = await this.prisma.organization.update({
       where: { id },
       data: {
         status: RecordStatus.INACTIVE,
+        deletedById: audit.actorId,
       },
     });
 
-    return this.toResponse(organization);
+    await this.auditService.record({
+      ...audit,
+      action: "DELETE",
+      entity: "Organization",
+      entityId: organization.id,
+    });
+
+    return organization;
   }
 
   private async ensureExists(id: string) {
@@ -126,37 +155,17 @@ export class OrganizationsService {
     }
   }
 
-  private resolveNit(dto: CreateOrganizationDto) {
-    return dto.taxId ?? dto.code;
-  }
-
   private validateStatus(status?: RecordStatus) {
     if (status && !Object.values(RecordStatus).includes(status)) {
       throw new BadRequestException("Estado de organizacion invalido");
     }
   }
 
-  private toResponse(organization: NonNullable<OrganizationRecord>) {
-    return {
-      id: organization.id,
-      code: organization.nit,
-      name: organization.name,
-      legalName: organization.name,
-      taxId: organization.nit,
-      email: organization.email,
-      phone: organization.phone,
-      address: null,
-      status: organization.status,
-      createdAt: organization.createdAt,
-      updatedAt: organization.updatedAt,
-    };
-  }
-
   private handlePrismaError(error: unknown): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2002") {
         throw new ConflictException(
-          "Ya existe una organizacion con este codigo o NIT.",
+          "Ya existe una organizacion con este NIT.",
         );
       }
 

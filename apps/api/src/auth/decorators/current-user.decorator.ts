@@ -1,4 +1,8 @@
-import { createParamDecorator, ExecutionContext } from "@nestjs/common";
+import {
+  createParamDecorator,
+  ExecutionContext,
+  UnauthorizedException,
+} from "@nestjs/common";
 
 export type CurrentUserPayload = {
   sub: string;
@@ -12,6 +16,10 @@ export const CurrentUser = createParamDecorator(
     const request = context.switchToHttp().getRequest<{
       user?: CurrentUserPayload;
     }>();
+
+    if (!request.user) {
+      throw new UnauthorizedException("Authenticated user was not found.");
+    }
 
     return request.user;
   },
