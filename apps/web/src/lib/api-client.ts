@@ -1,6 +1,7 @@
 export type ApiClientOptions = {
   token?: string;
   headers?: HeadersInit;
+  skipAuth?: boolean;
 };
 
 export class ApiClientError extends Error {
@@ -24,11 +25,19 @@ export async function apiRequest<T>(
   init: RequestInit = {},
   options: ApiClientOptions = {},
 ): Promise<T> {
+  const token =
+    options.token ??
+    (!options.skipAuth && typeof window !== "undefined"
+      ? window.localStorage.getItem("bitacora.accessToken")
+      : null);
+  const isFormData =
+    typeof FormData !== "undefined" && init.body instanceof FormData;
+
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
       ...init.headers,
     },
