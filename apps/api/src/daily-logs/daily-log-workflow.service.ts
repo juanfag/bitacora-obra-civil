@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -293,7 +292,7 @@ export class DailyLogWorkflowService {
     // TODO: Replace this transition map with the official state machine after
     // migrating DailyLogStatus to OPEN/PENDING_APPROVAL/REOPENED/CANCELLED.
     if (!allowedStatuses.includes(dailyLog.status)) {
-      throw new BadRequestException(
+      throw new ConflictException(
         `Invalid daily log transition from ${dailyLog.status}.`,
       );
     }

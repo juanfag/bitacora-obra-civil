@@ -67,3 +67,35 @@ export async function cleanupDailyLogGraph(
     },
   });
 }
+
+export async function cleanupSmokeProjects(
+  prisma: PrismaService,
+  projectIds: string[],
+) {
+  if (!projectIds.length) {
+    return;
+  }
+
+  await prisma.projectUser.deleteMany({
+    where: {
+      projectId: {
+        in: projectIds,
+      },
+    },
+  });
+  await prisma.auditLog.deleteMany({
+    where: {
+      entityName: "Project",
+      entityId: {
+        in: projectIds,
+      },
+    },
+  });
+  await prisma.project.deleteMany({
+    where: {
+      id: {
+        in: projectIds,
+      },
+    },
+  });
+}

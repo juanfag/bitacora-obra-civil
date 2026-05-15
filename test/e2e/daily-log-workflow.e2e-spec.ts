@@ -2,7 +2,10 @@ import { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { PrismaService } from "../../apps/api/src/prisma/prisma.service";
 import { authHeader, loginAsDemoAdmin } from "./helpers/auth.helper";
-import { cleanupDailyLogGraph } from "./helpers/cleanup.helper";
+import {
+  cleanupDailyLogGraph,
+  cleanupSmokeProjects,
+} from "./helpers/cleanup.helper";
 import { createSmokeTestApp } from "./helpers/app.helper";
 import {
   createDailyLog,
@@ -10,7 +13,7 @@ import {
   uploadPdfAttachment,
 } from "./helpers/daily-log.helper";
 import {
-  getDemoProjectId,
+  createSmokeProject,
   getSmokeEventTypeId,
   uniqueFutureDate,
 } from "./helpers/data.helper";
@@ -19,9 +22,10 @@ describe("DailyLog workflow smoke", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let token: string;
-  let projectId: string;
+  let adminUserId: string;
   let eventTypeId: string;
   const createdDailyLogIds: string[] = [];
+  const createdProjectIds: string[] = [];
   const runId = `smoke-${Date.now()}`;
 
   beforeAll(async () => {
@@ -31,25 +35,80 @@ describe("DailyLog workflow smoke", () => {
 
     const auth = await loginAsDemoAdmin(app);
     token = auth.token;
-    projectId = await getDemoProjectId(prisma);
+    adminUserId = auth.user.id;
     eventTypeId = await getSmokeEventTypeId(prisma);
   });
 
   afterAll(async () => {
     await cleanupDailyLogGraph(prisma, createdDailyLogIds);
+    await cleanupSmokeProjects(prisma, createdProjectIds);
     await app.close();
   });
 
-  async function createTrackedDailyLog(name: string) {
+  async function createTrackedProject(name: string) {
+    const projectId = await createSmokeProject(
+      prisma,
+      adminUserId,
+      `${runId}-${name}`,
+    );
+
+    createdProjectIds.push(projectId);
+
+    return projectId;
+  }
+
+  async function createTrackedDailyLog(
+    name: string,
+    options?: {
+      projectId?: string;
+      logDate?: string;
+    },
+  ) {
+    const targetProjectId =
+      options?.projectId ?? (await createTrackedProject(name));
     const dailyLog = await createDailyLog(app, token, {
-      projectId,
-      logDate: uniqueFutureDate(`${runId}-${name}`),
+      projectId: targetProjectId,
+      logDate: options?.logDate ?? uniqueFutureDate(`${runId}-${name}`),
       comments: `Smoke ${name}`,
     });
 
     createdDailyLogIds.push(dailyLog.id);
 
     return dailyLog;
+  }
+
+  function dateForWeekday(weekday: number, offsetWeeks = 0) {
+    const date = new Date(Date.UTC(2100, 0, 1 + offsetWeeks * 7));
+
+    while (date.getUTCDay() !== weekday) {
+      date.setUTCDate(date.getUTCDate() + 1);
+    }
+
+    return date.toISOString().split("T")[0];
+  }
+
+  function addDays(dateString: string, days: number) {
+    const date = new Date(`${dateString}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+
+    return date.toISOString().split("T")[0];
+  }
+
+  async function closeDailyLog(dailyLogId: string) {
+    await request(app.getHttpServer())
+      .post(`/api/v1/daily-logs/${dailyLogId}/submit`)
+      .set(authHeader(token))
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/daily-logs/${dailyLogId}/approve`)
+      .set(authHeader(token))
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/daily-logs/${dailyLogId}/close`)
+      .set(authHeader(token))
+      .expect(201);
   }
 
   it("health endpoint works", async () => {
@@ -81,6 +140,99 @@ describe("DailyLog workflow smoke", () => {
     });
 
     expect(event.dailyLogId).toBe(dailyLog.id);
+  });
+
+  it("blocks duplicate DailyLog creation for the same project and work date", async () => {
+    const duplicateProjectId = await createTrackedProject("duplicate-daily-log");
+    const logDate = uniqueFutureDate(`${runId}-duplicate-daily-log`);
+    const dailyLog = await createTrackedDailyLog("duplicate-daily-log", {
+      projectId: duplicateProjectId,
+      logDate,
+    });
+
+    await request(app.getHttpServer())
+      .post("/api/v1/daily-logs")
+      .set(authHeader(token))
+      .send({
+        projectId: duplicateProjectId,
+        logDate,
+        comments: "Duplicate attempt",
+      })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.message).toBe(
+          "A daily log already exists for this project and date.",
+        );
+      });
+
+    expect(dailyLog.status).toBe("DRAFT");
+  });
+
+  it("blocks creating a DailyLog when the previous required work day is not CLOSED", async () => {
+    const sequenceProjectId = await createTrackedProject("previous-not-closed");
+    const firstDate = dateForWeekday(1, 1);
+    const secondDate = addDays(firstDate, 1);
+
+    await createTrackedDailyLog("previous-not-closed-first", {
+      projectId: sequenceProjectId,
+      logDate: firstDate,
+    });
+
+    await request(app.getHttpServer())
+      .post("/api/v1/daily-logs")
+      .set(authHeader(token))
+      .send({
+        projectId: sequenceProjectId,
+        logDate: secondDate,
+        comments: "Should be blocked until previous day is closed",
+      })
+      .expect(409)
+      .expect(({ body }) => {
+        expect(body.message).toBe(
+          "Previous required work day daily log must be CLOSED before creating a new daily log.",
+        );
+      });
+  });
+
+  it("allows creating a DailyLog after the previous required work day is CLOSED", async () => {
+    const sequenceProjectId = await createTrackedProject("previous-closed");
+    const firstDate = dateForWeekday(1, 2);
+    const secondDate = addDays(firstDate, 1);
+    const firstDailyLog = await createTrackedDailyLog("previous-closed-first", {
+      projectId: sequenceProjectId,
+      logDate: firstDate,
+    });
+
+    await closeDailyLog(firstDailyLog.id);
+
+    const secondDailyLog = await createTrackedDailyLog("previous-closed-second", {
+      projectId: sequenceProjectId,
+      logDate: secondDate,
+    });
+
+    expect(secondDailyLog.status).toBe("DRAFT");
+  });
+
+  it("skips Sunday when validating the previous required work day", async () => {
+    const sequenceProjectId = await createTrackedProject("sunday-skip");
+    const saturday = dateForWeekday(6, 3);
+    const monday = addDays(saturday, 2);
+    const saturdayDailyLog = await createTrackedDailyLog(
+      "sunday-skip-saturday",
+      {
+        projectId: sequenceProjectId,
+        logDate: saturday,
+      },
+    );
+
+    await closeDailyLog(saturdayDailyLog.id);
+
+    const mondayDailyLog = await createTrackedDailyLog("sunday-skip-monday", {
+      projectId: sequenceProjectId,
+      logDate: monday,
+    });
+
+    expect(mondayDailyLog.status).toBe("DRAFT");
   });
 
   it("submits, approves, and closes a DailyLog", async () => {
@@ -122,7 +274,7 @@ describe("DailyLog workflow smoke", () => {
     await request(app.getHttpServer())
       .post(`/api/v1/daily-logs/${dailyLog.id}/approve`)
       .set(authHeader(token))
-      .expect(400)
+      .expect(409)
       .expect(({ body }) => {
         expect(body.message).toContain("Invalid daily log transition from DRAFT");
       });
@@ -130,7 +282,7 @@ describe("DailyLog workflow smoke", () => {
     await request(app.getHttpServer())
       .post(`/api/v1/daily-logs/${dailyLog.id}/close`)
       .set(authHeader(token))
-      .expect(400)
+      .expect(409)
       .expect(({ body }) => {
         expect(body.message).toContain("Invalid daily log transition from DRAFT");
       });
@@ -147,7 +299,7 @@ describe("DailyLog workflow smoke", () => {
     await request(app.getHttpServer())
       .post(`/api/v1/daily-logs/${dailyLog.id}/submit`)
       .set(authHeader(token))
-      .expect(400)
+      .expect(409)
       .expect(({ body }) => {
         expect(body.message).toContain(
           "Invalid daily log transition from IN_REVIEW",
@@ -181,7 +333,7 @@ describe("DailyLog workflow smoke", () => {
       .send({
         activity: "Should be blocked",
       })
-      .expect(400)
+      .expect(409)
       .expect(({ body }) => {
         expect(body.message).toBe(
           "Daily log events can only be edited while the daily log is DRAFT.",
@@ -192,10 +344,10 @@ describe("DailyLog workflow smoke", () => {
       app,
       token,
       event.id,
-      400,
+      409,
     );
 
-    expect(attachmentResponse.status).toBe(400);
+    expect(attachmentResponse.status).toBe(409);
     expect(attachmentResponse.body).toBeDefined();
     expect(attachmentResponse.body.message).toBe(
       "Attachments can only be uploaded while the daily log is editable.",

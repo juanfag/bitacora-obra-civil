@@ -58,6 +58,26 @@ This applies to:
 - Attachment upload.
 - Attachment delete.
 
+## DailyLog Creation Sequence Rule
+
+DailyLog creation currently enforces one DailyLog per project and work date, and validates that the previous required work day for the same project is already `CLOSED`.
+
+Temporary calendar rule:
+
+```text
+Sunday is skipped as a non-working day.
+All other weekdays are treated as required work days.
+```
+
+This Sunday-only skip is temporary technical debt. It must later be replaced by a project-aware working calendar that supports:
+
+- working days by project;
+- holidays by country, organization, or project;
+- justified no-work days;
+- project suspension days.
+
+See `docs/03-technical/WORKING_CALENDAR_FOUNDATION_V1.md` for the proposed foundation.
+
 ## Allowed Transitions
 
 | Endpoint | From | To | Notes |

@@ -208,7 +208,7 @@ export class AttachmentsService {
     }
 
     if (!isEditableStatus(dailyLogEvent.dailyLog.status)) {
-      throw new BadRequestException(
+      throw new ConflictException(
         "Attachments can only be uploaded while the daily log is editable.",
       );
     }

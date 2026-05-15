@@ -13,14 +13,17 @@ import {
 } from "@nestjs/common";
 import {
   ApiBearerAuth,
+  ApiBadRequestResponse,
   ApiBody,
   ApiConflictResponse,
+  ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { AuditRequestContext } from "../audit/audit.types";
 import { AuditContext } from "../audit/decorators/audit-context.decorator";
@@ -40,6 +43,8 @@ import { DailyLogProjectAccessGuard } from "./guards/daily-log-project-access.gu
 
 @ApiTags("daily-logs")
 @ApiBearerAuth()
+@ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+@ApiForbiddenResponse({ description: "Authenticated user does not have the required permission." })
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller()
 export class DailyLogsController {
@@ -47,6 +52,8 @@ export class DailyLogsController {
 
   @Get("daily-logs")
   @ApiOperation({ summary: "List daily logs" })
+  @ApiOkResponse({ description: "Daily logs returned with pagination metadata." })
+  @ApiBadRequestResponse({ description: "Invalid query parameters." })
   @Permissions("daily-logs:read")
   findAll(@Query() query: FindDailyLogsQueryDto) {
     return this.dailyLogsService.findAll(query);
@@ -55,6 +62,8 @@ export class DailyLogsController {
   @Get("daily-logs/:id")
   @ApiOperation({ summary: "Get daily log by id" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Daily log returned." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
   @Permissions("daily-logs:read")
   findOne(@Param("id") id: string) {
     return this.dailyLogsService.findOne(id);
@@ -63,6 +72,8 @@ export class DailyLogsController {
   @Get("projects/:projectId/daily-logs")
   @ApiOperation({ summary: "List daily logs by project" })
   @ApiParam({ name: "projectId", description: "Project UUID" })
+  @ApiOkResponse({ description: "Project daily logs returned with pagination metadata." })
+  @ApiBadRequestResponse({ description: "Invalid projectId or query parameters." })
   @Permissions("daily-logs:read")
   findByProject(
     @Param("projectId") projectId: string,
@@ -73,6 +84,12 @@ export class DailyLogsController {
 
   @Post("daily-logs")
   @ApiOperation({ summary: "Create daily log" })
+  @ApiCreatedResponse({ description: "Daily log created in DRAFT status." })
+  @ApiBadRequestResponse({ description: "Invalid payload or projectId reference." })
+  @ApiConflictResponse({
+    description:
+      "Duplicate daily log, missing previous required work day, or previous required work day is not CLOSED.",
+  })
   @Permissions("daily-logs:create")
   create(
     @Body() createDailyLogDto: CreateDailyLogDto,
@@ -88,6 +105,10 @@ export class DailyLogsController {
   @Patch("daily-logs/:id")
   @ApiOperation({ summary: "Update daily log" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Daily log updated." })
+  @ApiBadRequestResponse({ description: "Invalid payload." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiConflictResponse({ description: "Daily log can only be edited while it is DRAFT." })
   @Permissions("daily-logs:update")
   update(
     @Param("id") id: string,
@@ -108,6 +129,10 @@ export class DailyLogsController {
       "Normalized alias for submitting a daily log to the current review state.",
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiCreatedResponse({ description: "Daily log submitted and moved to IN_REVIEW." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log must be DRAFT to be submitted." })
   @Permissions("daily-logs:update")
   @UseGuards(DailyLogProjectAccessGuard)
   submit(
@@ -126,8 +151,13 @@ export class DailyLogsController {
     summary: "Submit daily log for review",
     description:
       "Legacy alias maintained for compatibility. Prefer POST /daily-logs/{id}/submit.",
+    deprecated: true,
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiCreatedResponse({ description: "Daily log submitted and moved to IN_REVIEW." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log must be DRAFT to be submitted." })
   @Permissions("daily-logs:update")
   @UseGuards(DailyLogProjectAccessGuard)
   submitForReview(
@@ -144,6 +174,10 @@ export class DailyLogsController {
   @Post("daily-logs/:id/approve")
   @ApiOperation({ summary: "Approve daily log" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiCreatedResponse({ description: "Daily log approved and moved to APPROVED." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log must be IN_REVIEW to be approved." })
   @Permissions("daily-logs:update")
   @UseGuards(DailyLogProjectAccessGuard)
   approve(
@@ -161,6 +195,11 @@ export class DailyLogsController {
   @ApiOperation({ summary: "Reject daily log" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @ApiBody({ type: RejectDailyLogDto })
+  @ApiCreatedResponse({ description: "Daily log rejected and moved to REJECTED." })
+  @ApiBadRequestResponse({ description: "Invalid rejection payload." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log must be IN_REVIEW to be rejected." })
   @Permissions("daily-logs:update")
   @UseGuards(DailyLogProjectAccessGuard)
   reject(
@@ -181,6 +220,10 @@ export class DailyLogsController {
     description: "Closes an approved daily log using the current workflow states.",
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiCreatedResponse({ description: "Daily log closed and moved to CLOSED." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log must be APPROVED to be closed." })
   @Permissions("daily-logs:update")
   @UseGuards(DailyLogProjectAccessGuard)
   close(
@@ -230,6 +273,10 @@ export class DailyLogsController {
       "Cancels a daily log using the current VOIDED state until official CANCELLED state migration exists.",
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiCreatedResponse({ description: "Daily log cancelled and moved to VOIDED." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log cannot be cancelled from CLOSED." })
   @Permissions("daily-logs:delete")
   @UseGuards(DailyLogProjectAccessGuard)
   cancel(
@@ -248,8 +295,13 @@ export class DailyLogsController {
     summary: "Soft delete daily log",
     description:
       "Legacy cancellation path maintained for compatibility. Prefer POST /daily-logs/{id}/cancel.",
+    deprecated: true,
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Daily log cancelled and moved to VOIDED." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({ description: "User does not have access to this project." })
+  @ApiConflictResponse({ description: "Daily log cannot be cancelled from CLOSED." })
   @Permissions("daily-logs:delete")
   @UseGuards(DailyLogProjectAccessGuard)
   remove(

@@ -88,12 +88,18 @@ export class DailyLogsService {
     audit: AuditRequestContext,
   ) {
     await this.ensureProjectExists(createDailyLogDto.projectId);
+    const logDate = this.toDate(createDailyLogDto.logDate);
+    await this.ensureDailyLogDoesNotExist(createDailyLogDto.projectId, logDate);
+    await this.ensurePreviousRequiredWorkDayIsClosed(
+      createDailyLogDto.projectId,
+      logDate,
+    );
 
     try {
       const dailyLog = await this.prisma.dailyLog.create({
         data: {
           projectId: createDailyLogDto.projectId,
-          logDate: this.toDate(createDailyLogDto.logDate),
+          logDate,
           // TODO: Keep DRAFT hardening until official workflow states are migrated.
           status: DailyLogStatus.DRAFT,
           comments: createDailyLogDto.comments,
@@ -199,9 +205,77 @@ export class DailyLogsService {
     return new Date(value);
   }
 
+  private async ensurePreviousRequiredWorkDayIsClosed(
+    projectId: string,
+    logDate: Date,
+  ) {
+    const previousRequiredWorkDay = this.getPreviousRequiredWorkDay(logDate);
+    const previousDailyLog = await this.prisma.dailyLog.findFirst({
+      where: {
+        projectId,
+        logDate: previousRequiredWorkDay,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (previousDailyLog) {
+      if (previousDailyLog.status !== DailyLogStatus.CLOSED) {
+        throw new ConflictException(
+          "Previous required work day daily log must be CLOSED before creating a new daily log.",
+        );
+      }
+
+      return;
+    }
+
+    const projectDailyLogsCount = await this.prisma.dailyLog.count({
+      where: {
+        projectId,
+      },
+    });
+
+    if (projectDailyLogsCount > 0) {
+      throw new ConflictException(
+        "Previous required work day daily log must exist and be CLOSED before creating a new daily log.",
+      );
+    }
+  }
+
+  private async ensureDailyLogDoesNotExist(projectId: string, logDate: Date) {
+    const dailyLog = await this.prisma.dailyLog.findFirst({
+      where: {
+        projectId,
+        logDate,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (dailyLog) {
+      throw new ConflictException(
+        "A daily log already exists for this project and date.",
+      );
+    }
+  }
+
+  private getPreviousRequiredWorkDay(logDate: Date) {
+    const previousDate = new Date(logDate);
+    previousDate.setUTCDate(previousDate.getUTCDate() - 1);
+
+    while (previousDate.getUTCDay() === 0) {
+      previousDate.setUTCDate(previousDate.getUTCDate() - 1);
+    }
+
+    return previousDate;
+  }
+
   private ensureDailyLogCanBeEdited(dailyLog: DailyLog) {
     if (!isEditableStatus(dailyLog.status)) {
-      throw new BadRequestException(
+      throw new ConflictException(
         "Daily log can only be edited while it is DRAFT.",
       );
     }

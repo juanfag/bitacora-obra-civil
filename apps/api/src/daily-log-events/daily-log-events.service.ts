@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -234,7 +235,7 @@ export class DailyLogEventsService {
     dailyLog: Pick<DailyLog, "status">,
   ) {
     if (!isEditableStatus(dailyLog.status)) {
-      throw new BadRequestException(
+      throw new ConflictException(
         "Daily log events can only be edited while the daily log is DRAFT.",
       );
     }
