@@ -30,6 +30,7 @@ import { FindDailyLogsQueryDto } from "./dto/find-daily-logs-query.dto";
 import { RejectDailyLogDto } from "./dto/reject-daily-log.dto";
 import { UpdateDailyLogDto } from "./dto/update-daily-log.dto";
 import { DailyLogsService } from "./daily-logs.service";
+import { DailyLogProjectAccessGuard } from "./guards/daily-log-project-access.guard";
 
 @ApiTags("daily-logs")
 @ApiBearerAuth()
@@ -102,6 +103,7 @@ export class DailyLogsController {
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:update")
+  @UseGuards(DailyLogProjectAccessGuard)
   submit(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -121,6 +123,7 @@ export class DailyLogsController {
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:update")
+  @UseGuards(DailyLogProjectAccessGuard)
   submitForReview(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -136,6 +139,7 @@ export class DailyLogsController {
   @ApiOperation({ summary: "Approve daily log" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:update")
+  @UseGuards(DailyLogProjectAccessGuard)
   approve(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -152,6 +156,7 @@ export class DailyLogsController {
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @ApiBody({ type: RejectDailyLogDto })
   @Permissions("daily-logs:update")
+  @UseGuards(DailyLogProjectAccessGuard)
   reject(
     @Param("id") id: string,
     @Body() rejectDailyLogDto: RejectDailyLogDto,
@@ -171,6 +176,7 @@ export class DailyLogsController {
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:update")
+  @UseGuards(DailyLogProjectAccessGuard)
   close(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -190,6 +196,7 @@ export class DailyLogsController {
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:delete")
+  @UseGuards(DailyLogProjectAccessGuard)
   cancel(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -209,6 +216,7 @@ export class DailyLogsController {
   })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:delete")
+  @UseGuards(DailyLogProjectAccessGuard)
   remove(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
