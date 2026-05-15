@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { ApprovalAction, DailyLog, DailyLogStatus, Prisma } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
-import { AuditRequestContext } from "../audit/audit.types";
+import { AuditActionType, AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
 import { RejectDailyLogDto } from "./dto/reject-daily-log.dto";
 
@@ -33,11 +33,12 @@ export class DailyLogWorkflowService {
       return updatedDailyLog;
     });
 
-    await this.auditService.record({
-      ...audit,
-      action: "DELETE",
-      entity: "DailyLog",
+    await this.recordWorkflowAudit(audit, {
+      action: "VOID",
       entityId: dailyLog.id,
+      workflowAction: "DAILY_LOG_VOIDED",
+      fromStatus: currentDailyLog.status,
+      toStatus: DailyLogStatus.VOIDED,
     });
 
     return dailyLog;
@@ -75,11 +76,12 @@ export class DailyLogWorkflowService {
       return updatedDailyLog;
     });
 
-    await this.auditService.record({
-      ...audit,
+    await this.recordWorkflowAudit(audit, {
       action: "SUBMIT",
-      entity: "DailyLog",
       entityId: dailyLog.id,
+      workflowAction: "DAILY_LOG_SUBMITTED",
+      fromStatus: currentDailyLog.status,
+      toStatus: DailyLogStatus.IN_REVIEW,
     });
 
     return dailyLog;
@@ -120,11 +122,12 @@ export class DailyLogWorkflowService {
       return updatedDailyLog;
     });
 
-    await this.auditService.record({
-      ...audit,
+    await this.recordWorkflowAudit(audit, {
       action: "APPROVE",
-      entity: "DailyLog",
       entityId: dailyLog.id,
+      workflowAction: "DAILY_LOG_APPROVED",
+      fromStatus: currentDailyLog.status,
+      toStatus: DailyLogStatus.APPROVED,
     });
 
     return dailyLog;
@@ -171,11 +174,13 @@ export class DailyLogWorkflowService {
       return updatedDailyLog;
     });
 
-    await this.auditService.record({
-      ...audit,
+    await this.recordWorkflowAudit(audit, {
       action: "REJECT",
-      entity: "DailyLog",
       entityId: dailyLog.id,
+      workflowAction: "DAILY_LOG_REJECTED",
+      fromStatus: currentDailyLog.status,
+      toStatus: DailyLogStatus.REJECTED,
+      comments: rejectDailyLogDto.comment,
     });
 
     return dailyLog;
@@ -205,11 +210,12 @@ export class DailyLogWorkflowService {
       return updatedDailyLog;
     });
 
-    await this.auditService.record({
-      ...audit,
+    await this.recordWorkflowAudit(audit, {
       action: "CLOSE",
-      entity: "DailyLog",
       entityId: dailyLog.id,
+      workflowAction: "DAILY_LOG_CLOSED",
+      fromStatus: currentDailyLog.status,
+      toStatus: DailyLogStatus.CLOSED,
     });
 
     return dailyLog;
@@ -261,6 +267,33 @@ export class DailyLogWorkflowService {
         fromStatus: input.fromStatus,
         toStatus: input.toStatus,
         changedById: input.changedById,
+        comments: input.comments,
+      },
+    });
+  }
+
+  private async recordWorkflowAudit(
+    audit: AuditRequestContext,
+    input: {
+      action: AuditActionType;
+      entityId: string;
+      workflowAction: string;
+      fromStatus: DailyLogStatus;
+      toStatus: DailyLogStatus;
+      comments?: string;
+    },
+  ) {
+    await this.auditService.record({
+      ...audit,
+      action: input.action,
+      entity: "DailyLog",
+      entityId: input.entityId,
+      oldValue: {
+        status: input.fromStatus,
+      },
+      newValue: {
+        status: input.toStatus,
+        workflowAction: input.workflowAction,
         comments: input.comments,
       },
     });

@@ -5,7 +5,8 @@ export type AuditActionType =
   | "SUBMIT"
   | "APPROVE"
   | "REJECT"
-  | "CLOSE";
+  | "CLOSE"
+  | "VOID";
 
 export type AuditRequestContext = {
   actorId: string;
@@ -17,4 +18,6 @@ export type AuditLogInput = AuditRequestContext & {
   action: AuditActionType;
   entity: string;
   entityId: string;
+  oldValue?: Record<string, unknown>;
+  newValue?: Record<string, unknown>;
 };
