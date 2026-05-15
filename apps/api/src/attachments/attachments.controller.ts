@@ -48,9 +48,9 @@ export class AttachmentsController {
   @ApiBody({
     schema: {
       type: "object",
-      required: ["eventId", "file"],
+      required: ["dailyLogEventId", "file"],
       properties: {
-        eventId: {
+        dailyLogEventId: {
           type: "string",
           format: "uuid",
         },
@@ -86,12 +86,12 @@ export class AttachmentsController {
     return this.attachmentsService.findOne(id);
   }
 
-  @Get("events/:eventId/attachments")
-  @ApiOperation({ summary: "List attachments by event" })
-  @ApiParam({ name: "eventId", description: "Event UUID" })
+  @Get("daily-log-events/:id/attachments")
+  @ApiOperation({ summary: "List attachments by daily log event" })
+  @ApiParam({ name: "id", description: "Daily log event UUID" })
   @Permissions("attachments:read")
-  findByEvent(@Param("eventId") eventId: string) {
-    return this.attachmentsService.findByEvent(eventId);
+  findByDailyLogEvent(@Param("id") id: string) {
+    return this.attachmentsService.findByDailyLogEvent(id);
   }
 
   @Delete("attachments/:id")

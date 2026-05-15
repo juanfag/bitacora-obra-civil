@@ -1,0 +1,515 @@
+// PRISMA_SCHEMA_V1.prisma
+// Proyecto: Bitácora diaria de Obra Civil
+//
+// Ubicación recomendada del archivo documental:
+//
+// C:\DEV\Bitacora de Obra\Documentation proyecto\02-architecture\backend\PRISMA_SCHEMA_V1.prisma
+//
+// Ubicación futura de implementación real:
+//
+// C:\DEV\Bitacora de Obra\backend\prisma\schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =======================================================
+// ENUMS
+// =======================================================
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  CLOSED
+  CANCELLED
+}
+
+enum ProjectRole {
+  ADMIN_PROJECT
+  DIRECTOR
+  RESIDENT_ENGINEER
+  INSPECTOR
+  VIEWER
+  AUDITOR
+}
+
+enum SystemRole {
+  ADMIN_SYSTEM
+  USER
+}
+
+enum DailyLogStatus {
+  DRAFT
+  OPEN
+  PENDING_APPROVAL
+  APPROVED
+  CLOSED
+  REOPENED
+  CANCELLED
+}
+
+enum SignatureType {
+  CANVAS
+  USER_PASSWORD
+  DIGITAL_CERTIFICATE
+}
+
+enum AttachmentEntityType {
+  PROJECT
+  DAILY_LOG
+  DAILY_LOG_EVENT
+  PDF_DOCUMENT
+}
+
+enum StorageProvider {
+  GOOGLE_DRIVE
+  LOCAL
+  S3
+  AZURE_BLOB
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+  SMS
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  READ
+  FAILED
+}
+
+enum WorkflowAction {
+  CREATE_DAILY_LOG
+  OPEN_DAILY_LOG
+  SUBMIT_FOR_APPROVAL
+  APPROVE_DAILY_LOG
+  REJECT_DAILY_LOG
+  GENERATE_PDF
+  CLOSE_DAILY_LOG
+  REOPEN_DAILY_LOG
+  CANCEL_DAILY_LOG
+}
+
+// =======================================================
+// CORE MODELS
+// =======================================================
+
+model Organization {
+  id        String             @id @default(uuid())
+  code      String             @unique
+  name      String
+  status    OrganizationStatus @default(ACTIVE)
+
+  projects  Project[]
+  users     User[]
+
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  deletedAt DateTime?
+
+  @@map("organizations")
+}
+
+model User {
+  id             String       @id @default(uuid())
+  organizationId String?
+
+  email          String       @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  systemRole     SystemRole   @default(USER)
+  status         UserStatus   @default(ACTIVE)
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  projectMembers ProjectMember[]
+
+  createdDailyLogs   DailyLog[] @relation("DailyLogCreatedBy")
+  openedDailyLogs    DailyLog[] @relation("DailyLogOpenedBy")
+  submittedDailyLogs DailyLog[] @relation("DailyLogSubmittedBy")
+  approvedDailyLogs  DailyLog[] @relation("DailyLogApprovedBy")
+  closedDailyLogs    DailyLog[] @relation("DailyLogClosedBy")
+
+  reportedEvents     DailyLogEvent[] @relation("DailyLogEventReportedBy")
+  uploadedAttachments Attachment[]    @relation("AttachmentUploadedBy")
+  signatures          Signature[]     @relation("SignatureSignedBy")
+  auditLogs           AuditLog[]      @relation("AuditPerformedBy")
+  workflowTransitions WorkflowTransition[] @relation("WorkflowPerformedBy")
+  notifications       Notification[]  @relation("NotificationRecipient")
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Project {
+  id             String        @id @default(uuid())
+  organizationId String
+
+  code           String
+  name           String
+  description    String?
+  startDate      DateTime?
+  endDate        DateTime?
+  status         ProjectStatus @default(DRAFT)
+
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+
+  members        ProjectMember[]
+  dailyLogs      DailyLog[]
+  eventTypes     EventType[]
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([status])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String      @id @default(uuid())
+  projectId String
+  userId    String
+  role      ProjectRole
+  isActive  Boolean     @default(true)
+  joinedAt  DateTime    @default(now())
+
+  project   Project     @relation(fields: [projectId], references: [id])
+  user      User        @relation(fields: [userId], references: [id])
+
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  deletedAt DateTime?
+
+  @@unique([projectId, userId, role])
+  @@index([projectId])
+  @@index([userId])
+  @@index([role])
+  @@map("project_members")
+}
+
+// =======================================================
+// DAILY LOG
+// =======================================================
+
+model DailyLog {
+  id            String         @id @default(uuid())
+  projectId     String
+  logDate       DateTime
+  status        DailyLogStatus @default(DRAFT)
+
+  createdById   String?
+  openedById    String?
+  submittedById String?
+  approvedById  String?
+  closedById    String?
+
+  openedAt      DateTime?
+  submittedAt   DateTime?
+  approvedAt    DateTime?
+  closedAt      DateTime?
+
+  finalPdfUrl   String?
+  finalPdfPath  String?
+  finalPdfHash  String?
+  finalPdfVersion Int          @default(0)
+
+  comments      String?
+
+  project       Project        @relation(fields: [projectId], references: [id])
+
+  createdBy     User?          @relation("DailyLogCreatedBy", fields: [createdById], references: [id])
+  openedBy      User?          @relation("DailyLogOpenedBy", fields: [openedById], references: [id])
+  submittedBy   User?          @relation("DailyLogSubmittedBy", fields: [submittedById], references: [id])
+  approvedBy    User?          @relation("DailyLogApprovedBy", fields: [approvedById], references: [id])
+  closedBy      User?          @relation("DailyLogClosedBy", fields: [closedById], references: [id])
+
+  events        DailyLogEvent[]
+  workflowTransitions WorkflowTransition[]
+  pdfDocuments  PdfDocument[]
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+
+  @@unique([projectId, logDate])
+  @@index([projectId])
+  @@index([status])
+  @@index([logDate])
+  @@map("daily_logs")
+}
+
+model DailyLogEvent {
+  id                   String   @id @default(uuid())
+  dailyLogId            String
+  eventTypeId           String
+  activity              String
+  executionDescription  String
+  reportedById          String
+  reportedAt            DateTime @default(now())
+
+  dailyLog              DailyLog @relation(fields: [dailyLogId], references: [id])
+  eventType             EventType @relation(fields: [eventTypeId], references: [id])
+  reportedBy            User     @relation("DailyLogEventReportedBy", fields: [reportedById], references: [id])
+
+  signatures            Signature[]
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  deletedAt             DateTime?
+
+  @@index([dailyLogId])
+  @@index([eventTypeId])
+  @@index([reportedById])
+  @@index([reportedAt])
+  @@map("daily_log_events")
+}
+
+model EventType {
+  id          String  @id @default(uuid())
+  projectId   String?
+
+  code        String
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  project     Project? @relation(fields: [projectId], references: [id])
+  events      DailyLogEvent[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([projectId, code])
+  @@index([projectId])
+  @@map("event_types")
+}
+
+// =======================================================
+// ATTACHMENTS
+// =======================================================
+
+model Attachment {
+  id               String               @id @default(uuid())
+
+  entityType       AttachmentEntityType
+  entityId         String
+
+  fileName         String
+  originalFileName String
+  mimeType         String
+  extension        String?
+  fileSize         Int
+  storageProvider  StorageProvider      @default(GOOGLE_DRIVE)
+  storagePath      String
+  publicUrl        String?
+  checksum         String?
+
+  uploadedById     String
+  uploadedAt       DateTime             @default(now())
+
+  metadata         Json?
+
+  uploadedBy       User                 @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
+
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  deletedAt        DateTime?
+
+  @@index([entityType, entityId])
+  @@index([uploadedById])
+  @@index([checksum])
+  @@map("attachments")
+}
+
+// =======================================================
+// SIGNATURES
+// =======================================================
+
+model Signature {
+  id            String        @id @default(uuid())
+
+  entityType    String
+  entityId      String
+
+  signedById    String
+  signedAt      DateTime      @default(now())
+  signatureType SignatureType @default(CANVAS)
+
+  signatureData String?
+  metadata      Json?
+
+  signedBy      User          @relation("SignatureSignedBy", fields: [signedById], references: [id])
+
+  dailyLogEvent DailyLogEvent? @relation(fields: [dailyLogEventId], references: [id])
+  dailyLogEventId String?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  @@index([entityType, entityId])
+  @@index([signedById])
+  @@map("signatures")
+}
+
+// =======================================================
+// WORKFLOW / AUDIT
+// =======================================================
+
+model WorkflowTransition {
+  id            String          @id @default(uuid())
+  dailyLogId    String
+
+  fromStatus    DailyLogStatus?
+  toStatus      DailyLogStatus
+  action        WorkflowAction
+
+  performedById String
+  performedAt   DateTime        @default(now())
+
+  comments      String?
+  reason        String?
+  metadata      Json?
+
+  dailyLog      DailyLog        @relation(fields: [dailyLogId], references: [id])
+  performedBy   User            @relation("WorkflowPerformedBy", fields: [performedById], references: [id])
+
+  createdAt     DateTime        @default(now())
+
+  @@index([dailyLogId])
+  @@index([performedById])
+  @@index([action])
+  @@index([performedAt])
+  @@map("workflow_transitions")
+}
+
+model AuditLog {
+  id             String    @id @default(uuid())
+
+  entity         String
+  entityId       String
+  action         String
+
+  fromStatus     String?
+  toStatus       String?
+
+  performedById  String?
+  performedAt    DateTime  @default(now())
+
+  requestId       String?
+  ipAddress       String?
+  userAgent       String?
+
+  comment         String?
+  reason          String?
+  metadata        Json?
+  payloadSnapshot Json?
+
+  performedBy     User?     @relation("AuditPerformedBy", fields: [performedById], references: [id])
+
+  createdAt       DateTime  @default(now())
+
+  @@index([entity, entityId])
+  @@index([performedById])
+  @@index([performedAt])
+  @@index([requestId])
+  @@map("audit_logs")
+}
+
+// =======================================================
+// PDF DOCUMENTS
+// =======================================================
+
+model PdfDocument {
+  id              String          @id @default(uuid())
+  dailyLogId      String
+
+  version         Int             @default(1)
+  fileName        String
+  storageProvider StorageProvider  @default(GOOGLE_DRIVE)
+  storagePath     String
+  publicUrl       String?
+  checksum        String
+
+  generatedById   String?
+  generatedAt     DateTime        @default(now())
+
+  metadata        Json?
+
+  dailyLog        DailyLog        @relation(fields: [dailyLogId], references: [id])
+
+  createdAt       DateTime        @default(now())
+
+  @@unique([dailyLogId, version])
+  @@index([dailyLogId])
+  @@index([checksum])
+  @@map("pdf_documents")
+}
+
+// =======================================================
+// NOTIFICATIONS
+// =======================================================
+
+model Notification {
+  id          String              @id @default(uuid())
+
+  type        String
+  channel     NotificationChannel @default(IN_APP)
+  status      NotificationStatus  @default(PENDING)
+
+  title       String
+  message     String
+
+  recipientId String
+  entityType  String?
+  entityId    String?
+
+  sentAt      DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+  error       String?
+
+  metadata    Json?
+
+  recipient   User                @relation("NotificationRecipient", fields: [recipientId], references: [id])
+
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([recipientId])
+  @@index([status])
+  @@index([entityType, entityId])
+  @@map("notifications")
+}

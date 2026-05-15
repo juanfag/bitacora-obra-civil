@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { EventStatus, Prisma, RecordStatus } from "@prisma/client";
+import { Prisma, RecordStatus } from "@prisma/client";
 import { unlink } from "node:fs/promises";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
@@ -20,11 +20,11 @@ export class AttachmentsService {
     audit: AuditRequestContext,
   ) {
     try {
-      await this.ensureEventExists(uploadAttachmentDto.eventId);
+      await this.ensureDailyLogEventExists(uploadAttachmentDto.dailyLogEventId);
 
       const attachment = await this.prisma.attachment.create({
         data: {
-          eventId: uploadAttachmentDto.eventId,
+          dailyLogEventId: uploadAttachmentDto.dailyLogEventId,
           filename: file.filename,
           originalName: file.originalname,
           mimeType: file.mimetype,
@@ -64,12 +64,12 @@ export class AttachmentsService {
     return attachment;
   }
 
-  async findByEvent(eventId: string) {
-    await this.ensureEventExists(eventId);
+  async findByDailyLogEvent(dailyLogEventId: string) {
+    await this.ensureDailyLogEventExists(dailyLogEventId);
 
     return this.prisma.attachment.findMany({
       where: {
-        eventId,
+        dailyLogEventId,
         status: RecordStatus.ACTIVE,
       },
       orderBy: {
@@ -101,21 +101,19 @@ export class AttachmentsService {
     return deletedAttachment;
   }
 
-  private async ensureEventExists(eventId: string) {
-    const event = await this.prisma.event.findFirst({
+  private async ensureDailyLogEventExists(dailyLogEventId: string) {
+    const dailyLogEvent = await this.prisma.dailyLogEvent.findUnique({
       where: {
-        id: eventId,
-        status: {
-          not: EventStatus.VOIDED,
-        },
+        id: dailyLogEventId,
       },
       select: {
         id: true,
+        deletedAt: true,
       },
     });
 
-    if (!event) {
-      throw new BadRequestException("Invalid eventId reference");
+    if (!dailyLogEvent || dailyLogEvent.deletedAt) {
+      throw new BadRequestException("Invalid dailyLogEventId reference");
     }
   }
 
@@ -130,7 +128,9 @@ export class AttachmentsService {
   private handlePrismaError(error: unknown): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2003") {
-        throw new BadRequestException("Invalid eventId or uploadedBy reference");
+        throw new BadRequestException(
+          "Invalid dailyLogEventId or uploadedBy reference",
+        );
       }
 
       if (error.code === "P2025") {
