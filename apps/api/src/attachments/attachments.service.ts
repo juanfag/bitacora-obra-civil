@@ -3,6 +3,7 @@ import { Prisma, RecordStatus } from "@prisma/client";
 import { unlink } from "node:fs/promises";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
+import { isEditableStatus } from "../daily-logs/daily-log-status.helper";
 import { PrismaService } from "../prisma/prisma.service";
 import { UploadedFile } from "../uploads/upload-file.types";
 import { UploadAttachmentDto } from "./dto/upload-attachment.dto";
@@ -20,7 +21,9 @@ export class AttachmentsService {
     audit: AuditRequestContext,
   ) {
     try {
-      await this.ensureDailyLogEventExists(uploadAttachmentDto.dailyLogEventId);
+      await this.ensureDailyLogEventCanReceiveAttachments(
+        uploadAttachmentDto.dailyLogEventId,
+      );
 
       const attachment = await this.prisma.attachment.create({
         data: {
@@ -114,6 +117,35 @@ export class AttachmentsService {
 
     if (!dailyLogEvent || dailyLogEvent.deletedAt) {
       throw new BadRequestException("Invalid dailyLogEventId reference");
+    }
+  }
+
+  private async ensureDailyLogEventCanReceiveAttachments(
+    dailyLogEventId: string,
+  ) {
+    const dailyLogEvent = await this.prisma.dailyLogEvent.findUnique({
+      where: {
+        id: dailyLogEventId,
+      },
+      select: {
+        id: true,
+        deletedAt: true,
+        dailyLog: {
+          select: {
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!dailyLogEvent || dailyLogEvent.deletedAt) {
+      throw new BadRequestException("Invalid dailyLogEventId reference");
+    }
+
+    if (!isEditableStatus(dailyLogEvent.dailyLog.status)) {
+      throw new BadRequestException(
+        "Attachments can only be uploaded while the daily log is editable.",
+      );
     }
   }
 
