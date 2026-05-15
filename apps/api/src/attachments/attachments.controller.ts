@@ -15,7 +15,10 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConflictResponse,
   ApiConsumes,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -95,8 +98,19 @@ export class AttachmentsController {
   }
 
   @Delete("attachments/:id")
-  @ApiOperation({ summary: "Soft delete attachment" })
+  @ApiOperation({
+    summary: "Delete attachment",
+    description:
+      "Soft deletes attachment metadata and removes the local file only when the related daily log is DRAFT and the user can access its project.",
+  })
   @ApiParam({ name: "id", description: "Attachment UUID" })
+  @ApiNotFoundResponse({ description: "Attachment does not exist." })
+  @ApiForbiddenResponse({
+    description: "Authenticated user does not have access to the project.",
+  })
+  @ApiConflictResponse({
+    description: "Daily log is not in DRAFT or related daily log event is deleted.",
+  })
   @Permissions("attachments:delete")
   remove(
     @Param("id") id: string,

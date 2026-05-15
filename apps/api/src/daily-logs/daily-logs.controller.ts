@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -12,6 +14,10 @@ import {
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiConflictResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -183,6 +189,35 @@ export class DailyLogsController {
     @AuditContext() audit: AuditRequestContext,
   ) {
     return this.dailyLogsService.close(id, {
+      ...audit,
+      actorId: user.sub,
+    });
+  }
+
+  @Post("daily-logs/:id/return-to-draft")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Return rejected daily log to draft",
+    description:
+      "Returns a rejected daily log to DRAFT so it can be corrected and submitted again.",
+  })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Daily log returned to DRAFT." })
+  @ApiNotFoundResponse({ description: "DailyLog not found." })
+  @ApiForbiddenResponse({
+    description: "User does not have access to this project.",
+  })
+  @ApiConflictResponse({
+    description: "DailyLog must be REJECTED to return to DRAFT.",
+  })
+  @Permissions("daily-logs:update")
+  @UseGuards(DailyLogProjectAccessGuard)
+  returnToDraft(
+    @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.dailyLogsService.returnToDraft(id, {
       ...audit,
       actorId: user.sub,
     });

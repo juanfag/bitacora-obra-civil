@@ -180,6 +180,10 @@ export class DailyLogsService {
     return this.workflowService.close(id, audit);
   }
 
+  async returnToDraft(id: string, audit: AuditRequestContext) {
+    return this.workflowService.returnToDraft(id, audit);
+  }
+
   private async ensureProjectExists(projectId: string) {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -198,7 +202,7 @@ export class DailyLogsService {
   private ensureDailyLogCanBeEdited(dailyLog: DailyLog) {
     if (!isEditableStatus(dailyLog.status)) {
       throw new BadRequestException(
-        "Daily log can only be edited while it is DRAFT or REJECTED.",
+        "Daily log can only be edited while it is DRAFT.",
       );
     }
   }

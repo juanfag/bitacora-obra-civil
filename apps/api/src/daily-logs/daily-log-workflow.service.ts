@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { ApprovalAction, DailyLog, DailyLogStatus, Prisma } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { AuditActionType, AuditRequestContext } from "../audit/audit.types";
@@ -14,6 +19,13 @@ export class DailyLogWorkflowService {
 
   async void(id: string, audit: AuditRequestContext) {
     const currentDailyLog = await this.findActiveDailyLog(id);
+    this.ensureTransitionAllowed(currentDailyLog, [
+      DailyLogStatus.DRAFT,
+      DailyLogStatus.IN_REVIEW,
+      DailyLogStatus.APPROVED,
+      DailyLogStatus.REJECTED,
+    ]);
+
     const dailyLog = await this.prisma.$transaction(async (tx) => {
       const updatedDailyLog = await tx.dailyLog.update({
         where: { id },
@@ -46,10 +58,7 @@ export class DailyLogWorkflowService {
 
   async submitForReview(id: string, audit: AuditRequestContext) {
     const currentDailyLog = await this.findActiveDailyLog(id);
-    this.ensureTransitionAllowed(currentDailyLog, [
-      DailyLogStatus.DRAFT,
-      DailyLogStatus.REJECTED,
-    ]);
+    this.ensureTransitionAllowed(currentDailyLog, [DailyLogStatus.DRAFT]);
 
     const dailyLog = await this.prisma.$transaction(async (tx) => {
       const updatedDailyLog = await tx.dailyLog.update({
@@ -216,6 +225,45 @@ export class DailyLogWorkflowService {
       workflowAction: "DAILY_LOG_CLOSED",
       fromStatus: currentDailyLog.status,
       toStatus: DailyLogStatus.CLOSED,
+    });
+
+    return dailyLog;
+  }
+
+  async returnToDraft(id: string, audit: AuditRequestContext) {
+    const currentDailyLog = await this.findActiveDailyLog(id);
+
+    if (currentDailyLog.status !== DailyLogStatus.REJECTED) {
+      throw new ConflictException("DailyLog must be REJECTED to return to DRAFT.");
+    }
+
+    const dailyLog = await this.prisma.$transaction(async (tx) => {
+      const updatedDailyLog = await tx.dailyLog.update({
+        where: { id },
+        data: {
+          status: DailyLogStatus.DRAFT,
+          reviewedById: null,
+          reviewedAt: null,
+          updatedById: audit.actorId,
+        },
+      });
+
+      await this.recordStatusHistory(tx, {
+        dailyLogId: id,
+        fromStatus: currentDailyLog.status,
+        toStatus: DailyLogStatus.DRAFT,
+        changedById: audit.actorId,
+      });
+
+      return updatedDailyLog;
+    });
+
+    await this.recordWorkflowAudit(audit, {
+      action: "UPDATE",
+      entityId: dailyLog.id,
+      workflowAction: "DAILY_LOG_RETURNED_TO_DRAFT",
+      fromStatus: currentDailyLog.status,
+      toStatus: DailyLogStatus.DRAFT,
     });
 
     return dailyLog;

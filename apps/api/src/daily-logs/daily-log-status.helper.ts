@@ -2,7 +2,6 @@ import { DailyLogStatus } from "@prisma/client";
 
 const EDITABLE_DAILY_LOG_STATUSES = [
   DailyLogStatus.DRAFT,
-  DailyLogStatus.REJECTED,
 ] as const;
 
 // TODO: Revisit this helper when the official workflow states are migrated

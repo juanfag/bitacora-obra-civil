@@ -1,10 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma, RecordStatus } from "@prisma/client";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { DailyLogStatus, Prisma, RecordStatus } from "@prisma/client";
 import { unlink } from "node:fs/promises";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { isEditableStatus } from "../daily-logs/daily-log-status.helper";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { UploadedFile } from "../uploads/upload-file.types";
 import { UploadAttachmentDto } from "./dto/upload-attachment.dto";
 
@@ -13,6 +20,7 @@ export class AttachmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
   async upload(
@@ -82,7 +90,8 @@ export class AttachmentsService {
   }
 
   async remove(id: string, audit: AuditRequestContext) {
-    const attachment = await this.findOne(id);
+    const attachment = await this.findActiveAttachmentWithDailyLogContext(id);
+    await this.ensureCanDeleteAttachment(attachment, audit.actorId);
 
     const deletedAttachment = await this.prisma.attachment.update({
       where: { id },
@@ -102,6 +111,62 @@ export class AttachmentsService {
     });
 
     return deletedAttachment;
+  }
+
+  private async findActiveAttachmentWithDailyLogContext(id: string) {
+    const attachment = await this.prisma.attachment.findFirst({
+      where: {
+        id,
+        status: RecordStatus.ACTIVE,
+      },
+      include: {
+        dailyLogEvent: {
+          include: {
+            dailyLog: {
+              select: {
+                projectId: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!attachment) {
+      throw new NotFoundException("Attachment not found");
+    }
+
+    if (attachment.dailyLogEvent.deletedAt) {
+      throw new ConflictException(
+        "Attachment cannot be deleted because its daily log event is deleted.",
+      );
+    }
+
+    return attachment;
+  }
+
+  private async ensureCanDeleteAttachment(
+    attachment: Awaited<
+      ReturnType<AttachmentsService["findActiveAttachmentWithDailyLogContext"]>
+    >,
+    userId: string,
+  ) {
+    const canAccessProject =
+      await this.projectAccessPolicy.canAccessProject(
+        userId,
+        attachment.dailyLogEvent.dailyLog.projectId,
+      );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
+
+    if (attachment.dailyLogEvent.dailyLog.status !== DailyLogStatus.DRAFT) {
+      throw new ConflictException(
+        "Attachments can only be deleted while the daily log is DRAFT.",
+      );
+    }
   }
 
   private async ensureDailyLogEventExists(dailyLogEventId: string) {

@@ -235,7 +235,7 @@ export class DailyLogEventsService {
   ) {
     if (!isEditableStatus(dailyLog.status)) {
       throw new BadRequestException(
-        "Daily log events can only be edited while the daily log is DRAFT or REJECTED.",
+        "Daily log events can only be edited while the daily log is DRAFT.",
       );
     }
   }

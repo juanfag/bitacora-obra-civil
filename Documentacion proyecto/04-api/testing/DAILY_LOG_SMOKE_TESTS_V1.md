@@ -200,6 +200,21 @@ Expected:
 - Response includes file metadata.
 - Save `id` as `<ATTACHMENT_ID>`.
 
+### 5.1 Delete Attachment While DRAFT
+
+Create a second attachment while the DailyLog is still `DRAFT`, then call:
+
+```http
+DELETE /api/v1/attachments/{ATTACHMENT_ID}
+```
+
+Expected:
+
+- HTTP 200.
+- Response status is `DELETED`.
+- `deletedById` is set.
+- The local file is removed after the DB soft delete succeeds.
+
 ### 6. Submit DailyLog
 
 Preferred endpoint:
@@ -269,7 +284,7 @@ Payload:
 Expected:
 
 - HTTP 400.
-- Message: `Daily log events can only be edited while the daily log is DRAFT or REJECTED.`
+- Message: `Daily log events can only be edited while the daily log is DRAFT.`
 
 ### 2. Upload Attachment After CLOSED
 
@@ -288,6 +303,19 @@ Expected:
 
 - HTTP 400.
 - Message: `Attachments can only be uploaded while the daily log is editable.`
+
+### 3. Delete Attachment After CLOSED
+
+Use an attachment that still exists for the closed DailyLog and call:
+
+```http
+DELETE /api/v1/attachments/{ATTACHMENT_ID}
+```
+
+Expected:
+
+- HTTP 409.
+- Message: `Attachments can only be deleted while the daily log is DRAFT.`
 
 ## Invalid Transitions
 
@@ -353,7 +381,52 @@ Expected:
 - `comments` is updated.
 - `DailyLogStatusHistory` receives `IN_REVIEW -> REJECTED`.
 - `AuditLog` receives `workflowAction: DAILY_LOG_REJECTED`.
-- DailyLogEvent creation/editing is allowed again because `REJECTED` is currently editable.
+- DailyLogEvent creation/editing remains blocked because only `DRAFT` is editable in hardened V1.
+
+## Return To Draft Flow
+
+Use the rejected DailyLog from the previous flow.
+
+```http
+POST /api/v1/daily-logs/{DAILY_LOG_ID}/return-to-draft
+```
+
+Expected:
+
+- HTTP 200.
+- Response status is `DRAFT`.
+- `DailyLogStatusHistory` receives `REJECTED -> DRAFT`.
+- `AuditLog` receives `workflowAction: DAILY_LOG_RETURNED_TO_DRAFT`.
+- DailyLogEvent creation/editing is allowed again because `DRAFT` is editable.
+- Attachment upload is allowed again for DailyLogEvents in this DailyLog.
+
+After returning to draft, verify correction and resubmission:
+
+```http
+PATCH /api/v1/daily-log-events/{DAILY_LOG_EVENT_ID}
+```
+
+Payload:
+
+```json
+{
+  "executionDescription": "Corrected after rejection."
+}
+```
+
+Expected:
+
+- HTTP 200.
+
+Then submit again:
+
+```http
+POST /api/v1/daily-logs/{DAILY_LOG_ID}/submit
+```
+
+Expected:
+
+- Response status is `IN_REVIEW`.
 
 ## Cancel Flow
 
@@ -408,6 +481,17 @@ Expected:
 - HTTP 403.
 - Message: `User does not have access to this project.`
 
+Attachment delete contextual check:
+
+```http
+DELETE /api/v1/attachments/{ATTACHMENT_ID}
+```
+
+Expected:
+
+- HTTP 403.
+- Message: `User does not have access to this project.`
+
 SUPER_ADMIN compatibility:
 
 - The current bypass is permission-based and uses `organizations:create`.
@@ -429,7 +513,35 @@ audit_logs.old_value.status
 audit_logs.new_value.status
 audit_logs.new_value.workflowAction
 attachments.daily_log_event_id
+attachments.status
+attachments.deleted_by
 ```
+
+## Attachment Delete Errors
+
+### Attachment Does Not Exist
+
+```http
+DELETE /api/v1/attachments/00000000-0000-0000-0000-000000000000
+```
+
+Expected:
+
+- HTTP 404.
+- Message: `Attachment not found`
+
+### Attachment Event Is Deleted
+
+If the related `DailyLogEvent` was soft deleted and the attachment remains active:
+
+```http
+DELETE /api/v1/attachments/{ATTACHMENT_ID}
+```
+
+Expected:
+
+- HTTP 409.
+- Message: `Attachment cannot be deleted because its daily log event is deleted.`
 
 ## Expected Current Workflow States
 
@@ -453,16 +565,56 @@ REOPENED
 CANCELLED
 ```
 
+## Current Status Transition Matrix
+
+Temporary equivalences:
+
+| Current state | Future functional equivalent |
+|---|---|
+| `IN_REVIEW` | `PENDING_APPROVAL` |
+| `VOIDED` | `CANCELLED` |
+
+Allowed transitions:
+
+| Endpoint | From | To | Expected |
+|---|---|---|---|
+| `POST /daily-logs/{id}/submit` | `DRAFT` | `IN_REVIEW` | OK |
+| `POST /daily-logs/{id}/submit-review` | `DRAFT` | `IN_REVIEW` | OK, legacy alias |
+| `POST /daily-logs/{id}/approve` | `IN_REVIEW` | `APPROVED` | OK |
+| `POST /daily-logs/{id}/reject` | `IN_REVIEW` | `REJECTED` | OK |
+| `POST /daily-logs/{id}/return-to-draft` | `REJECTED` | `DRAFT` | OK |
+| `POST /daily-logs/{id}/close` | `APPROVED` | `CLOSED` | OK |
+| `POST /daily-logs/{id}/cancel` | `DRAFT`, `IN_REVIEW`, `APPROVED`, `REJECTED` | `VOIDED` | OK |
+| `DELETE /daily-logs/{id}` | `DRAFT`, `IN_REVIEW`, `APPROVED`, `REJECTED` | `VOIDED` | OK, legacy alias |
+
+Blocked transitions:
+
+| Attempt | Expected |
+|---|---|
+| `DRAFT -> APPROVED` | HTTP 400 |
+| `DRAFT -> CLOSED` | HTTP 400 |
+| `REJECTED -> IN_REVIEW` | HTTP 400; call `return-to-draft` first |
+| `DRAFT -> DRAFT` via `return-to-draft` | HTTP 409 |
+| `CLOSED -> VOIDED` | HTTP 400 |
+
+Editable state rule:
+
+```text
+Only DRAFT is editable.
+```
+
 ## Known Technical Debt
 
 - `OPEN`, `PENDING_APPROVAL`, `REOPENED`, and `CANCELLED` are not implemented yet.
 - `cancel` currently maps to `VOIDED`.
 - `submit` currently maps to `IN_REVIEW`.
+- `return-to-draft` is a tactical recovery path until official `OPEN` / `REOPENED` states exist.
 - `submit-review` remains as a legacy alias.
 - `DELETE /daily-logs/{id}` remains as a legacy cancellation path.
+- `submit-review` should be deprecated after clients migrate to `submit`.
+- `DELETE /daily-logs/{id}` should be deprecated after clients migrate to `cancel`.
 - Contextual SUPER_ADMIN compatibility currently uses a permission-based bypass via `organizations:create`; it should be replaced by an explicit platform policy.
 - No automated e2e framework exists yet.
 - Project authorization smoke testing needs a second user/project fixture beyond the default seed.
 - PDF validation is not part of this smoke checklist because PDF workflow is not implemented yet.
-- Attachment delete is not blocked by DailyLog state yet; this checklist validates upload blocking only.
-
+- Attachment delete is blocked unless the related DailyLog is `DRAFT`.
