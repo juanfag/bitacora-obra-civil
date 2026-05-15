@@ -6,6 +6,7 @@ import {
 import { DailyLog, DailyLogEvent, DailyLogStatus, Prisma, RecordStatus } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
+import { isEditableStatus } from "../daily-logs/daily-log-status.helper";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateDailyLogEventDto } from "./dto/create-daily-log-event.dto";
 import { FindDailyLogEventsQueryDto } from "./dto/find-daily-log-events-query.dto";
@@ -232,10 +233,7 @@ export class DailyLogEventsService {
   private ensureDailyLogCanEditEvents(
     dailyLog: Pick<DailyLog, "status">,
   ) {
-    if (
-      dailyLog.status !== DailyLogStatus.DRAFT &&
-      dailyLog.status !== DailyLogStatus.REJECTED
-    ) {
+    if (!isEditableStatus(dailyLog.status)) {
       throw new BadRequestException(
         "Daily log events can only be edited while the daily log is DRAFT or REJECTED.",
       );

@@ -4,10 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { ApprovalAction, DailyLog, DailyLogStatus, Prisma } from "@prisma/client";
+import { DailyLog, DailyLogStatus, Prisma } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
+import { DailyLogWorkflowService } from "./daily-log-workflow.service";
+import { isEditableStatus } from "./daily-log-status.helper";
 import { CreateDailyLogDto } from "./dto/create-daily-log.dto";
 import { FindDailyLogsQueryDto } from "./dto/find-daily-logs-query.dto";
 import { RejectDailyLogDto } from "./dto/reject-daily-log.dto";
@@ -18,6 +20,7 @@ export class DailyLogsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly workflowService: DailyLogWorkflowService,
   ) {}
 
   async findAll(query: FindDailyLogsQueryDto) {
@@ -91,7 +94,8 @@ export class DailyLogsService {
         data: {
           projectId: createDailyLogDto.projectId,
           logDate: this.toDate(createDailyLogDto.logDate),
-          status: createDailyLogDto.status,
+          // TODO: Keep DRAFT hardening until official workflow states are migrated.
+          status: DailyLogStatus.DRAFT,
           comments: createDailyLogDto.comments,
           createdById: audit.actorId,
         },
@@ -149,121 +153,15 @@ export class DailyLogsService {
   }
 
   async remove(id: string, audit: AuditRequestContext) {
-    const currentDailyLog = await this.findOne(id);
-    const dailyLog = await this.prisma.$transaction(async (tx) => {
-      const updatedDailyLog = await tx.dailyLog.update({
-        where: { id },
-        data: {
-          status: DailyLogStatus.VOIDED,
-          deletedById: audit.actorId,
-        },
-      });
-
-      await this.recordStatusHistory(tx, {
-        dailyLogId: id,
-        fromStatus: currentDailyLog.status,
-        toStatus: DailyLogStatus.VOIDED,
-        changedById: audit.actorId,
-      });
-
-      return updatedDailyLog;
-    });
-
-    await this.auditService.record({
-      ...audit,
-      action: "DELETE",
-      entity: "DailyLog",
-      entityId: dailyLog.id,
-    });
-
-    return dailyLog;
+    return this.workflowService.void(id, audit);
   }
 
   async submitForReview(id: string, audit: AuditRequestContext) {
-    const currentDailyLog = await this.findOne(id);
-    this.ensureTransitionAllowed(currentDailyLog, [
-      DailyLogStatus.DRAFT,
-      DailyLogStatus.REJECTED,
-    ]);
-
-    const dailyLog = await this.prisma.$transaction(async (tx) => {
-      const updatedDailyLog = await tx.dailyLog.update({
-        where: { id },
-        data: {
-          status: DailyLogStatus.IN_REVIEW,
-          submittedAt: new Date(),
-          reviewedById: null,
-          reviewedAt: null,
-          approvedById: null,
-          approvedAt: null,
-          closedAt: null,
-          updatedById: audit.actorId,
-        },
-      });
-
-      await this.recordStatusHistory(tx, {
-        dailyLogId: id,
-        fromStatus: currentDailyLog.status,
-        toStatus: DailyLogStatus.IN_REVIEW,
-        changedById: audit.actorId,
-      });
-
-      return updatedDailyLog;
-    });
-
-    await this.auditService.record({
-      ...audit,
-      action: "SUBMIT",
-      entity: "DailyLog",
-      entityId: dailyLog.id,
-    });
-
-    return dailyLog;
+    return this.workflowService.submitForReview(id, audit);
   }
 
   async approve(id: string, audit: AuditRequestContext) {
-    const currentDailyLog = await this.findOne(id);
-    this.ensureTransitionAllowed(currentDailyLog, [DailyLogStatus.IN_REVIEW]);
-
-    const now = new Date();
-    const dailyLog = await this.prisma.$transaction(async (tx) => {
-      const updatedDailyLog = await tx.dailyLog.update({
-        where: { id },
-        data: {
-          status: DailyLogStatus.APPROVED,
-          reviewedById: audit.actorId,
-          reviewedAt: now,
-          approvedById: audit.actorId,
-          approvedAt: now,
-          updatedById: audit.actorId,
-          approvals: {
-            create: {
-              approverId: audit.actorId,
-              action: ApprovalAction.APPROVED,
-              signedAt: now,
-            },
-          },
-        },
-      });
-
-      await this.recordStatusHistory(tx, {
-        dailyLogId: id,
-        fromStatus: currentDailyLog.status,
-        toStatus: DailyLogStatus.APPROVED,
-        changedById: audit.actorId,
-      });
-
-      return updatedDailyLog;
-    });
-
-    await this.auditService.record({
-      ...audit,
-      action: "APPROVE",
-      entity: "DailyLog",
-      entityId: dailyLog.id,
-    });
-
-    return dailyLog;
+    return this.workflowService.approve(id, audit);
   }
 
   async reject(
@@ -271,84 +169,11 @@ export class DailyLogsService {
     rejectDailyLogDto: RejectDailyLogDto,
     audit: AuditRequestContext,
   ) {
-    const currentDailyLog = await this.findOne(id);
-    this.ensureTransitionAllowed(currentDailyLog, [DailyLogStatus.IN_REVIEW]);
-
-    const now = new Date();
-    const dailyLog = await this.prisma.$transaction(async (tx) => {
-      const updatedDailyLog = await tx.dailyLog.update({
-        where: { id },
-        data: {
-          status: DailyLogStatus.REJECTED,
-          reviewedById: audit.actorId,
-          reviewedAt: now,
-          approvedById: null,
-          approvedAt: null,
-          comments: rejectDailyLogDto.comment,
-          updatedById: audit.actorId,
-          approvals: {
-            create: {
-              approverId: audit.actorId,
-              action: ApprovalAction.REJECTED,
-              comments: rejectDailyLogDto.comment,
-            },
-          },
-        },
-      });
-
-      await this.recordStatusHistory(tx, {
-        dailyLogId: id,
-        fromStatus: currentDailyLog.status,
-        toStatus: DailyLogStatus.REJECTED,
-        changedById: audit.actorId,
-        comments: rejectDailyLogDto.comment,
-      });
-
-      return updatedDailyLog;
-    });
-
-    await this.auditService.record({
-      ...audit,
-      action: "REJECT",
-      entity: "DailyLog",
-      entityId: dailyLog.id,
-    });
-
-    return dailyLog;
+    return this.workflowService.reject(id, rejectDailyLogDto, audit);
   }
 
   async close(id: string, audit: AuditRequestContext) {
-    const currentDailyLog = await this.findOne(id);
-    this.ensureTransitionAllowed(currentDailyLog, [DailyLogStatus.APPROVED]);
-
-    const dailyLog = await this.prisma.$transaction(async (tx) => {
-      const updatedDailyLog = await tx.dailyLog.update({
-        where: { id },
-        data: {
-          status: DailyLogStatus.CLOSED,
-          closedAt: new Date(),
-          updatedById: audit.actorId,
-        },
-      });
-
-      await this.recordStatusHistory(tx, {
-        dailyLogId: id,
-        fromStatus: currentDailyLog.status,
-        toStatus: DailyLogStatus.CLOSED,
-        changedById: audit.actorId,
-      });
-
-      return updatedDailyLog;
-    });
-
-    await this.auditService.record({
-      ...audit,
-      action: "CLOSE",
-      entity: "DailyLog",
-      entityId: dailyLog.id,
-    });
-
-    return dailyLog;
+    return this.workflowService.close(id, audit);
   }
 
   private async ensureProjectExists(projectId: string) {
@@ -367,46 +192,11 @@ export class DailyLogsService {
   }
 
   private ensureDailyLogCanBeEdited(dailyLog: DailyLog) {
-    if (
-      dailyLog.status !== DailyLogStatus.DRAFT &&
-      dailyLog.status !== DailyLogStatus.REJECTED
-    ) {
+    if (!isEditableStatus(dailyLog.status)) {
       throw new BadRequestException(
         "Daily log can only be edited while it is DRAFT or REJECTED.",
       );
     }
-  }
-
-  private ensureTransitionAllowed(
-    dailyLog: DailyLog,
-    allowedStatuses: DailyLogStatus[],
-  ) {
-    if (!allowedStatuses.includes(dailyLog.status)) {
-      throw new BadRequestException(
-        `Invalid daily log transition from ${dailyLog.status}.`,
-      );
-    }
-  }
-
-  private async recordStatusHistory(
-    tx: Prisma.TransactionClient,
-    input: {
-      dailyLogId: string;
-      fromStatus: DailyLogStatus;
-      toStatus: DailyLogStatus;
-      changedById: string;
-      comments?: string;
-    },
-  ) {
-    await tx.dailyLogStatusHistory.create({
-      data: {
-        dailyLogId: input.dailyLogId,
-        fromStatus: input.fromStatus,
-        toStatus: input.toStatus,
-        changedById: input.changedById,
-        comments: input.comments,
-      },
-    });
   }
 
   private handlePrismaError(error: unknown): never {
