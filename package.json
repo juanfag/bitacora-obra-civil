@@ -2,7 +2,9 @@
   "scripts": {
     "api:dev": "ts-node --project apps/api/tsconfig.json apps/api/src/main.ts",
     "api:build": "tsc -p apps/api/tsconfig.build.json",
-    "api:start": "node dist/apps/api/main.js"
+    "api:start": "node dist/apps/api/main.js",
+    "test:e2e": "jest --config test/jest-e2e.config.cjs",
+    "test:smoke": "npm run test:e2e -- --runTestsByPath test/e2e/daily-log-workflow.e2e-spec.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -35,10 +37,16 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
+    "@nestjs/testing": "^11.1.21",
     "@types/bcrypt": "^6.0.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^25.7.0",
     "@types/passport-jwt": "^4.0.1",
     "@types/pg": "^8.20.0",
+    "@types/supertest": "^6.0.3",
+    "jest": "^30.4.2",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
