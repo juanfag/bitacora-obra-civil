@@ -156,6 +156,10 @@ export class DailyLogsService {
     return this.workflowService.void(id, audit);
   }
 
+  async cancel(id: string, audit: AuditRequestContext) {
+    return this.workflowService.void(id, audit);
+  }
+
   async submitForReview(id: string, audit: AuditRequestContext) {
     return this.workflowService.submitForReview(id, audit);
   }

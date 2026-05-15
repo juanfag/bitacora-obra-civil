@@ -94,8 +94,31 @@ export class DailyLogsController {
     });
   }
 
+  @Post("daily-logs/:id/submit")
+  @ApiOperation({
+    summary: "Submit daily log",
+    description:
+      "Normalized alias for submitting a daily log to the current review state.",
+  })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @Permissions("daily-logs:update")
+  submit(
+    @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.dailyLogsService.submitForReview(id, {
+      ...audit,
+      actorId: user.sub,
+    });
+  }
+
   @Post("daily-logs/:id/submit-review")
-  @ApiOperation({ summary: "Submit daily log for review" })
+  @ApiOperation({
+    summary: "Submit daily log for review",
+    description:
+      "Legacy alias maintained for compatibility. Prefer POST /daily-logs/{id}/submit.",
+  })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:update")
   submitForReview(
@@ -142,7 +165,10 @@ export class DailyLogsController {
   }
 
   @Post("daily-logs/:id/close")
-  @ApiOperation({ summary: "Close daily log" })
+  @ApiOperation({
+    summary: "Close daily log",
+    description: "Closes an approved daily log using the current workflow states.",
+  })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:update")
   close(
@@ -156,8 +182,31 @@ export class DailyLogsController {
     });
   }
 
+  @Post("daily-logs/:id/cancel")
+  @ApiOperation({
+    summary: "Cancel daily log",
+    description:
+      "Cancels a daily log using the current VOIDED state until official CANCELLED state migration exists.",
+  })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @Permissions("daily-logs:delete")
+  cancel(
+    @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.dailyLogsService.cancel(id, {
+      ...audit,
+      actorId: user.sub,
+    });
+  }
+
   @Delete("daily-logs/:id")
-  @ApiOperation({ summary: "Soft delete daily log" })
+  @ApiOperation({
+    summary: "Soft delete daily log",
+    description:
+      "Legacy cancellation path maintained for compatibility. Prefer POST /daily-logs/{id}/cancel.",
+  })
   @ApiParam({ name: "id", description: "Daily log UUID" })
   @Permissions("daily-logs:delete")
   remove(
