@@ -47,7 +47,7 @@ export default function ProjectsPage() {
         const message =
           caughtError instanceof ApiClientError
             ? caughtError.message
-            : "Unable to load projects.";
+            : "No fue posible cargar los proyectos.";
 
         setError(message);
       } finally {
@@ -74,25 +74,25 @@ export default function ProjectsPage() {
       <section>
         <div className="page-header">
           <div>
-            <p className="eyebrow">Projects</p>
-            <h1>Project workspace</h1>
+            <p className="eyebrow">Proyectos</p>
+            <h1>Espacio de proyectos</h1>
             <p className="muted">
-              Select a project before creating or reviewing daily logs.
+              Selecciona un proyecto antes de crear o revisar bitacoras.
             </p>
           </div>
           <div className="toolbar">
             <Link className="button secondary" href="/daily-logs">
-              View daily logs
+              Ver bitacoras
             </Link>
             <button className="button secondary" onClick={handleLogout} type="button">
-              Logout
+              Cerrar sesion
             </button>
           </div>
         </div>
 
         {isLoading ? (
           <div className="panel">
-            <p className="muted">Loading projects...</p>
+            <p className="muted">Cargando...</p>
           </div>
         ) : null}
 
@@ -104,9 +104,9 @@ export default function ProjectsPage() {
 
         {!isLoading && !error && projects.length === 0 ? (
           <div className="panel">
-            <h2>No projects found</h2>
+            <h2>No hay proyectos</h2>
             <p className="muted">
-              There are no projects available for this user yet.
+              No hay proyectos disponibles para este usuario.
             </p>
           </div>
         ) : null}
@@ -121,10 +121,10 @@ export default function ProjectsPage() {
                 </div>
                 <h2>{project.name}</h2>
                 <p className="muted">
-                  Review and manage daily logs for this project.
+                  Revisa y gestiona las bitacoras de este proyecto.
                 </p>
                 <Link className="button" href={`/daily-logs?projectId=${project.id}`}>
-                  View daily logs
+                  Ver bitacoras
                 </Link>
               </article>
             ))}

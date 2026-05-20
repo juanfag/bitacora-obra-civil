@@ -3,13 +3,13 @@ import Link from "next/link";
 import "./globals.css";
 
 const navigation = [
-  { href: "/projects", label: "Projects" },
-  { href: "/daily-logs", label: "Daily Logs" },
+  { href: "/projects", label: "Proyectos" },
+  { href: "/daily-logs", label: "Bitacoras" },
 ];
 
 export const metadata: Metadata = {
   title: "Bitacora de Obra",
-  description: "Daily construction log MVP shell",
+  description: "Base frontend del MVP de bitacora de obra",
 };
 
 export default function RootLayout({
@@ -25,7 +25,7 @@ export default function RootLayout({
             <Link href="/projects" className="brand">
               Bitacora
             </Link>
-            <nav className="nav" aria-label="Main navigation">
+            <nav className="nav" aria-label="Navegacion principal">
               {navigation.map((item) => (
                 <Link key={item.href} href={item.href}>
                   {item.label}

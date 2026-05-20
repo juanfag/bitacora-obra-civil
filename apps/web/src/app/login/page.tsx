@@ -25,7 +25,7 @@ export default function LoginPage() {
       const message =
         caughtError instanceof ApiClientError
           ? caughtError.message
-          : "Unable to sign in. Check your credentials and try again.";
+          : "No fue posible iniciar sesion. Revisa tus credenciales e intenta de nuevo.";
 
       setError(message);
     } finally {
@@ -37,17 +37,17 @@ export default function LoginPage() {
     <section>
       <div className="page-header">
         <div>
-          <p className="eyebrow">Auth</p>
-          <h1>Login</h1>
+          <p className="eyebrow">Autenticacion</p>
+          <h1>Iniciar sesion</h1>
           <p className="muted">
-            Sign in with your backend credentials to continue.
+            Ingresa con tus credenciales para continuar.
           </p>
         </div>
       </div>
 
       <form className="panel form" onSubmit={handleSubmit}>
         <div className="field">
-          <label htmlFor="email">Email</label>
+          <label htmlFor="email">Correo</label>
           <input
             autoComplete="email"
             id="email"
@@ -59,7 +59,7 @@ export default function LoginPage() {
           />
         </div>
         <div className="field">
-          <label htmlFor="password">Password</label>
+          <label htmlFor="password">Contrasena</label>
           <input
             autoComplete="current-password"
             id="password"
@@ -72,7 +72,7 @@ export default function LoginPage() {
         </div>
         {error ? <p className="form-error">{error}</p> : null}
         <button disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Signing in..." : "Sign in"}
+          {isSubmitting ? "Cargando..." : "Iniciar sesion"}
         </button>
       </form>
     </section>

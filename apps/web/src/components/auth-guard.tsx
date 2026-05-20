@@ -25,7 +25,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   if (!checked) {
     return (
       <section className="panel">
-        <p className="muted">Checking session...</p>
+        <p className="muted">Cargando...</p>
       </section>
     );
   }

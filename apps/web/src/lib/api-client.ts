@@ -55,7 +55,7 @@ export async function apiRequest<T>(
       "message" in body &&
       typeof body.message === "string"
         ? body.message
-        : `API request failed with status ${response.status}`;
+        : `La solicitud al API fallo con estado ${response.status}`;
 
     throw new ApiClientError(message, response.status, body);
   }

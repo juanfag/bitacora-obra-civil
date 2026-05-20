@@ -83,7 +83,7 @@ export default function DailyLogsPage() {
         const message =
           caughtError instanceof ApiClientError
             ? caughtError.message
-            : "Unable to load daily logs.";
+            : "No fue posible cargar las bitacoras.";
 
         setError(message);
       } finally {
@@ -105,32 +105,32 @@ export default function DailyLogsPage() {
       <section>
         <div className="page-header">
           <div>
-            <p className="eyebrow">Daily Logs</p>
-            <h1>Daily log register</h1>
+            <p className="eyebrow">Bitacoras</p>
+            <h1>Registro de bitacoras</h1>
             <p className="muted">
-              Review daily logs for the selected project.
+              Revisa las bitacoras del proyecto seleccionado.
             </p>
           </div>
           <Link className="button secondary" href="/projects">
-            Back to projects
+            Volver a proyectos
           </Link>
         </div>
 
         {hasCheckedProjectId && !projectId ? (
           <div className="panel">
-            <h2>Select a project first</h2>
+            <h2>Selecciona un proyecto primero</h2>
             <p className="muted">
-              Daily logs are shown in the context of a project. Go back to projects and choose one.
+              Las bitacoras se muestran dentro del contexto de un proyecto. Vuelve a proyectos y elige uno.
             </p>
             <Link className="button" href="/projects">
-              Select project
+              Seleccionar proyecto
             </Link>
           </div>
         ) : null}
 
         {projectId && isLoading ? (
           <div className="panel">
-            <p className="muted">Loading daily logs...</p>
+            <p className="muted">Cargando...</p>
           </div>
         ) : null}
 
@@ -142,9 +142,9 @@ export default function DailyLogsPage() {
 
         {projectId && !isLoading && !error && dailyLogs.length === 0 ? (
           <div className="panel">
-            <h2>No daily logs found</h2>
+            <h2>No hay bitacoras</h2>
             <p className="muted">
-              This project does not have daily logs yet.
+              Este proyecto aun no tiene bitacoras.
             </p>
           </div>
         ) : null}
@@ -157,12 +157,12 @@ export default function DailyLogsPage() {
                   <span className="badge">{formatDate(dailyLog.logDate)}</span>
                   <span className="badge">{dailyLog.status}</span>
                 </div>
-                <h2>{dailyLog.comments || `Daily log ${formatDate(dailyLog.logDate)}`}</h2>
+                <h2>{dailyLog.comments || `Bitacora ${formatDate(dailyLog.logDate)}`}</h2>
                 <p className="muted">
-                  Project daily log ready for detail review.
+                  Bitacora del proyecto lista para revisar en detalle.
                 </p>
                 <Link className="button" href={`/daily-logs/${dailyLog.id}`}>
-                  View details
+                  Ver detalle
                 </Link>
               </article>
             ))}

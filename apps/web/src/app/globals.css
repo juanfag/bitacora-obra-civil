@@ -176,6 +176,16 @@ button:disabled {
   padding: 10px 12px;
 }
 
+.form-success {
+  background: #ecfdf3;
+  border: 1px solid #abefc6;
+  border-radius: 6px;
+  color: var(--accent-strong);
+  font-size: 14px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
 label {
   color: var(--muted);
   font-size: 13px;
