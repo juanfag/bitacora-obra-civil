@@ -311,8 +311,8 @@ export default function DailyLogDetailPage() {
             <p className="eyebrow">Detalle de bitácora</p>
             <h1>
               {dailyLog
-                ? `Bitácora ${formatDate(dailyLog.logDate)}`
-                : `Bitácora ${params.id}`}
+                ? `Bitácora del ${formatDate(dailyLog.logDate)}`
+                : "Bitácora diaria"}
             </h1>
             <p className="muted">
               Revisa el estado actual de la bitácora y su información guardada.
@@ -467,7 +467,8 @@ export default function DailyLogDetailPage() {
             <article className="panel">
               <h2>Metadatos</h2>
               <p>
-                <strong>ID del proyecto:</strong> {dailyLog.projectId}
+                <strong>ID del proyecto:</strong>{" "}
+                {formatTechnicalId(dailyLog.projectId)}
               </p>
               <p>
                 <strong>Creado:</strong>{" "}
@@ -720,7 +721,7 @@ function getEventTypeLabel(event: DailyLogEvent, eventTypes: EventType[]) {
     event.type ??
     event.eventType?.description ??
     event.eventType?.code ??
-    event.eventTypeId ??
+    (event.eventTypeId ? formatTechnicalId(event.eventTypeId) : null) ??
     null
   );
 }
@@ -771,12 +772,20 @@ function getEventTypeOptionLabel(eventType: EventType) {
     eventType.label ??
     eventType.description ??
     eventType.code ??
-    eventType.id
+    formatTechnicalId(eventType.id)
   );
 }
 
+function formatTechnicalId(value: string) {
+  if (value.length <= 13) {
+    return value;
+  }
+
+  return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat("es-CO", {
     day: "2-digit",
     month: "short",
     year: "numeric",
