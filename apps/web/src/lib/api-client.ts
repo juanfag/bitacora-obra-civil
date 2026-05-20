@@ -15,7 +15,7 @@ export class ApiClientError extends Error {
   }
 }
 
-const defaultBaseUrl = "http://localhost:3000/api/v1";
+const defaultBaseUrl = "http://localhost:3001/api/v1";
 
 export const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? defaultBaseUrl;
@@ -55,7 +55,7 @@ export async function apiRequest<T>(
       "message" in body &&
       typeof body.message === "string"
         ? body.message
-        : `La solicitud al API fallo con estado ${response.status}`;
+        : `La solicitud al API falló con estado ${response.status}`;
 
     throw new ApiClientError(message, response.status, body);
   }
