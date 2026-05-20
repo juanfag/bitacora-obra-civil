@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiClientError, apiRequest } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
@@ -73,6 +73,10 @@ export default function DailyLogDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<string | null>(null);
+  const [eventTypeValue, setEventTypeValue] = useState("");
+  const [eventActivity, setEventActivity] = useState("");
+  const [eventExecutionDescription, setEventExecutionDescription] = useState("");
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -170,6 +174,46 @@ export default function DailyLogDetailPage() {
     }
   }
 
+  async function createEvent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSuccessMessage(null);
+    setIsCreatingEvent(true);
+
+    try {
+      await apiRequest<DailyLogEvent>("/daily-log-events", {
+        method: "POST",
+        body: JSON.stringify({
+          dailyLogId: params.id,
+          eventTypeId: eventTypeValue,
+          activity: eventActivity,
+          executionDescription: eventExecutionDescription,
+          reportedAt: new Date().toISOString(),
+        }),
+      });
+
+      setEventTypeValue("");
+      setEventActivity("");
+      setEventExecutionDescription("");
+      await loadDailyLog();
+      setSuccessMessage("Evento creado correctamente.");
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError) {
+        if (caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        setError(caughtError.message || "Error al crear el evento.");
+        return;
+      }
+
+      setError("Error al crear el evento.");
+    } finally {
+      setIsCreatingEvent(false);
+    }
+  }
+
   return (
     <AuthGuard>
       <section>
@@ -257,6 +301,52 @@ export default function DailyLogDetailPage() {
             <article className="panel">
               <h2>Eventos de la bitácora</h2>
               <DailyLogEvents events={getDailyLogEvents(dailyLog)} />
+              {canCreateEvents(dailyLog.status) ? (
+                <form className="form event-form" onSubmit={createEvent}>
+                  <h2>Crear evento</h2>
+                  <div className="field">
+                    <label htmlFor="eventType">Tipo de evento</label>
+                    <input
+                      id="eventType"
+                      name="eventType"
+                      onChange={(event) => setEventTypeValue(event.target.value)}
+                      placeholder="ID del tipo de evento"
+                      required
+                      type="text"
+                      value={eventTypeValue}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="activity">Actividad</label>
+                    <input
+                      id="activity"
+                      name="activity"
+                      onChange={(event) => setEventActivity(event.target.value)}
+                      required
+                      type="text"
+                      value={eventActivity}
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="executionDescription">
+                      Descripción de ejecución
+                    </label>
+                    <textarea
+                      id="executionDescription"
+                      name="executionDescription"
+                      onChange={(event) =>
+                        setEventExecutionDescription(event.target.value)
+                      }
+                      required
+                      rows={4}
+                      value={eventExecutionDescription}
+                    />
+                  </div>
+                  <button disabled={isCreatingEvent} type="submit">
+                    {isCreatingEvent ? "Guardando..." : "Crear evento"}
+                  </button>
+                </form>
+              ) : null}
             </article>
 
             <article className="panel">
@@ -379,6 +469,10 @@ function getEventUser(event: DailyLogEvent) {
     event.user?.email ??
     null
   );
+}
+
+function canCreateEvents(status: string) {
+  return status !== "CLOSED" && status !== "VOIDED";
 }
 
 function formatDate(value: string) {
