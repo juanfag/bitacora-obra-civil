@@ -20,12 +20,23 @@ type DailyLog = {
   DailyLogEvents?: DailyLogEvent[];
 };
 
+type EventType = {
+  id: string;
+  name?: string | null;
+  label?: string | null;
+  description?: string | null;
+  code?: string | null;
+};
+
 type DailyLogEvent = {
   id?: string;
   eventType?: {
     name?: string | null;
+    label?: string | null;
+    description?: string | null;
     code?: string | null;
   } | null;
+  eventTypeId?: string | null;
   type?: string | null;
   eventTypeName?: string | null;
   activity?: string | null;
@@ -68,6 +79,8 @@ export default function DailyLogDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [dailyLog, setDailyLog] = useState<DailyLog | null>(null);
+  const [dailyLogEvents, setDailyLogEvents] = useState<DailyLogEvent[]>([]);
+  const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -83,6 +96,14 @@ export default function DailyLogDetailPage() {
     router.replace("/login");
   }, [router]);
 
+  const loadDailyLogEvents = useCallback(async () => {
+    const response = await apiRequest<CollectionResponse<DailyLogEvent>>(
+      `/daily-log-events?dailyLogId=${encodeURIComponent(params.id)}`,
+    );
+
+    setDailyLogEvents(toCollection(response));
+  }, [params.id]);
+
   const loadDailyLog = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -92,8 +113,16 @@ export default function DailyLogDetailPage() {
       const response = await apiRequest<DailyLog>(
         `/daily-logs/${encodeURIComponent(params.id)}`,
       );
+      const [eventTypesResponse, eventsResponse] = await Promise.all([
+        apiRequest<CollectionResponse<EventType>>("/event-types"),
+        apiRequest<CollectionResponse<DailyLogEvent>>(
+          `/daily-log-events?dailyLogId=${encodeURIComponent(params.id)}`,
+        ),
+      ]);
 
       setDailyLog(response);
+      setEventTypes(toCollection(eventTypesResponse));
+      setDailyLogEvents(toCollection(eventsResponse));
     } catch (caughtError) {
       if (caughtError instanceof ApiClientError) {
         if (caughtError.status === 401) {
@@ -195,7 +224,7 @@ export default function DailyLogDetailPage() {
       setEventTypeValue("");
       setEventActivity("");
       setEventExecutionDescription("");
-      await loadDailyLog();
+      await loadDailyLogEvents();
       setSuccessMessage("Evento creado correctamente.");
     } catch (caughtError) {
       if (caughtError instanceof ApiClientError) {
@@ -300,21 +329,29 @@ export default function DailyLogDetailPage() {
 
             <article className="panel">
               <h2>Eventos de la bitácora</h2>
-              <DailyLogEvents events={getDailyLogEvents(dailyLog)} />
+              <DailyLogEvents events={dailyLogEvents} eventTypes={eventTypes} />
               {canCreateEvents(dailyLog.status) ? (
                 <form className="form event-form" onSubmit={createEvent}>
                   <h2>Crear evento</h2>
                   <div className="field">
                     <label htmlFor="eventType">Tipo de evento</label>
-                    <input
+                    {eventTypes.length === 0 ? (
+                      <p className="muted">No hay tipos de evento disponibles.</p>
+                    ) : null}
+                    <select
                       id="eventType"
                       name="eventType"
                       onChange={(event) => setEventTypeValue(event.target.value)}
-                      placeholder="ID del tipo de evento"
                       required
-                      type="text"
                       value={eventTypeValue}
-                    />
+                    >
+                      <option value="">Selecciona un tipo de evento</option>
+                      {eventTypes.map((eventType) => (
+                        <option key={eventType.id} value={eventType.id}>
+                          {getEventTypeOptionLabel(eventType)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="field">
                     <label htmlFor="activity">Actividad</label>
@@ -342,7 +379,10 @@ export default function DailyLogDetailPage() {
                       value={eventExecutionDescription}
                     />
                   </div>
-                  <button disabled={isCreatingEvent} type="submit">
+                  <button
+                    disabled={isCreatingEvent || eventTypes.length === 0}
+                    type="submit"
+                  >
                     {isCreatingEvent ? "Guardando..." : "Crear evento"}
                   </button>
                 </form>
@@ -404,7 +444,13 @@ function WorkflowActions({
   );
 }
 
-function DailyLogEvents({ events }: { events: DailyLogEvent[] }) {
+function DailyLogEvents({
+  events,
+  eventTypes,
+}: {
+  events: DailyLogEvent[];
+  eventTypes: EventType[];
+}) {
   if (!events.length) {
     return (
       <p className="muted">Esta bitácora aún no tiene eventos registrados.</p>
@@ -416,8 +462,8 @@ function DailyLogEvents({ events }: { events: DailyLogEvent[] }) {
       {events.map((event, index) => (
         <article className="card" key={event.id ?? index}>
           <div className="status-row">
-            {getEventTypeLabel(event) ? (
-              <span className="badge">{getEventTypeLabel(event)}</span>
+            {getEventTypeLabel(event, eventTypes) ? (
+              <span className="badge">{getEventTypeLabel(event, eventTypes)}</span>
             ) : null}
             {getEventDate(event) ? (
               <span className="badge">{formatDateTime(getEventDate(event) as string)}</span>
@@ -438,17 +484,22 @@ function DailyLogEvents({ events }: { events: DailyLogEvent[] }) {
   );
 }
 
-function getDailyLogEvents(dailyLog: DailyLog) {
-  return (
-    dailyLog.dailyLogEvents ??
-    dailyLog.events ??
-    dailyLog.DailyLogEvents ??
-    []
+function getEventTypeLabel(event: DailyLogEvent, eventTypes: EventType[]) {
+  const eventTypeFromCatalog = eventTypes.find(
+    (eventType) => eventType.id === event.eventTypeId,
   );
-}
 
-function getEventTypeLabel(event: DailyLogEvent) {
-  return event.eventType?.name ?? event.eventTypeName ?? event.type ?? event.eventType?.code ?? null;
+  return (
+    event.eventType?.name ??
+    event.eventType?.label ??
+    (eventTypeFromCatalog ? getEventTypeOptionLabel(eventTypeFromCatalog) : null) ??
+    event.eventTypeName ??
+    event.type ??
+    event.eventType?.description ??
+    event.eventType?.code ??
+    event.eventTypeId ??
+    null
+  );
 }
 
 function getEventDescription(event: DailyLogEvent) {
@@ -473,6 +524,32 @@ function getEventUser(event: DailyLogEvent) {
 
 function canCreateEvents(status: string) {
   return status !== "CLOSED" && status !== "VOIDED";
+}
+
+type CollectionResponse<T> =
+  | T[]
+  | {
+      data?: T[];
+      items?: T[];
+      results?: T[];
+    };
+
+function toCollection<T>(response: CollectionResponse<T>) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  return response.data ?? response.items ?? response.results ?? [];
+}
+
+function getEventTypeOptionLabel(eventType: EventType) {
+  return (
+    eventType.name ??
+    eventType.label ??
+    eventType.description ??
+    eventType.code ??
+    eventType.id
+  );
 }
 
 function formatDate(value: string) {
