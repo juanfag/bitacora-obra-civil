@@ -90,6 +90,11 @@ export default function DailyLogDetailPage() {
   const [eventActivity, setEventActivity] = useState("");
   const [eventExecutionDescription, setEventExecutionDescription] = useState("");
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editingActivity, setEditingActivity] = useState("");
+  const [editingExecutionDescription, setEditingExecutionDescription] =
+    useState("");
+  const [savingEventId, setSavingEventId] = useState<string | null>(null);
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -243,6 +248,61 @@ export default function DailyLogDetailPage() {
     }
   }
 
+  function startEditingEvent(event: DailyLogEvent) {
+    if (!event.id) {
+      return;
+    }
+
+    setError(null);
+    setSuccessMessage(null);
+    setEditingEventId(event.id);
+    setEditingActivity(event.activity ?? event.title ?? "");
+    setEditingExecutionDescription(getEventDescription(event) ?? "");
+  }
+
+  function cancelEditingEvent() {
+    setEditingEventId(null);
+    setEditingActivity("");
+    setEditingExecutionDescription("");
+  }
+
+  async function updateEvent(eventId: string) {
+    setError(null);
+    setSuccessMessage(null);
+    setSavingEventId(eventId);
+
+    try {
+      await apiRequest<DailyLogEvent>(
+        `/daily-log-events/${encodeURIComponent(eventId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            activity: editingActivity,
+            executionDescription: editingExecutionDescription,
+          }),
+        },
+      );
+
+      await loadDailyLogEvents();
+      cancelEditingEvent();
+      setSuccessMessage("Evento actualizado correctamente.");
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError) {
+        if (caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        setError(caughtError.message || "Error al actualizar el evento.");
+        return;
+      }
+
+      setError("Error al actualizar el evento.");
+    } finally {
+      setSavingEventId(null);
+    }
+  }
+
   return (
     <AuthGuard>
       <section>
@@ -329,7 +389,22 @@ export default function DailyLogDetailPage() {
 
             <article className="panel">
               <h2>Eventos de la bitácora</h2>
-              <DailyLogEvents events={dailyLogEvents} eventTypes={eventTypes} />
+              <EditableDailyLogEvents
+                canEdit={canCreateEvents(dailyLog.status)}
+                editingActivity={editingActivity}
+                editingEventId={editingEventId}
+                editingExecutionDescription={editingExecutionDescription}
+                eventTypes={eventTypes}
+                events={dailyLogEvents}
+                onCancelEditing={cancelEditingEvent}
+                onEditingActivityChange={setEditingActivity}
+                onEditingExecutionDescriptionChange={
+                  setEditingExecutionDescription
+                }
+                onSaveEvent={updateEvent}
+                onStartEditing={startEditingEvent}
+                savingEventId={savingEventId}
+              />
               {canCreateEvents(dailyLog.status) ? (
                 <form className="form event-form" onSubmit={createEvent}>
                   <h2>Crear evento</h2>
@@ -444,12 +519,160 @@ function WorkflowActions({
   );
 }
 
-function DailyLogEvents({
+function EditableDailyLogEvents({
+  canEdit,
+  editingActivity,
+  editingEventId,
+  editingExecutionDescription,
   events,
   eventTypes,
+  onCancelEditing,
+  onEditingActivityChange,
+  onEditingExecutionDescriptionChange,
+  onSaveEvent,
+  onStartEditing,
+  savingEventId,
 }: {
+  canEdit: boolean;
+  editingActivity: string;
+  editingEventId: string | null;
+  editingExecutionDescription: string;
   events: DailyLogEvent[];
   eventTypes: EventType[];
+  onCancelEditing: () => void;
+  onEditingActivityChange: (value: string) => void;
+  onEditingExecutionDescriptionChange: (value: string) => void;
+  onSaveEvent: (eventId: string) => void;
+  onStartEditing: (event: DailyLogEvent) => void;
+  savingEventId: string | null;
+}) {
+  if (!events.length) {
+    return (
+      <p className="muted">Esta bitÃ¡cora aÃºn no tiene eventos registrados.</p>
+    );
+  }
+
+  return (
+    <div className="grid">
+      {events.map((event, index) => {
+        const eventId = event.id ?? null;
+        const isEditing = Boolean(eventId && editingEventId === eventId);
+        const isSaving = Boolean(eventId && savingEventId === eventId);
+
+        return (
+          <article className="card" key={event.id ?? index}>
+            <div className="status-row">
+              {getEventTypeLabel(event, eventTypes) ? (
+                <span className="badge">{getEventTypeLabel(event, eventTypes)}</span>
+              ) : null}
+              {getEventDate(event) ? (
+                <span className="badge">{formatDateTime(getEventDate(event) as string)}</span>
+              ) : null}
+            </div>
+
+            {isEditing ? (
+              <div className="form">
+                <div className="field">
+                  <label htmlFor={`event-activity-${eventId}`}>
+                    Actividad del evento
+                  </label>
+                  <input
+                    id={`event-activity-${eventId}`}
+                    onChange={(changeEvent) =>
+                      onEditingActivityChange(changeEvent.target.value)
+                    }
+                    type="text"
+                    value={editingActivity}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor={`event-description-${eventId}`}>
+                    Descripción de ejecución del evento
+                  </label>
+                  <textarea
+                    id={`event-description-${eventId}`}
+                    onChange={(changeEvent) =>
+                      onEditingExecutionDescriptionChange(
+                        changeEvent.target.value,
+                      )
+                    }
+                    rows={4}
+                    value={editingExecutionDescription}
+                  />
+                </div>
+                <div className="toolbar">
+                  <button
+                    disabled={isSaving}
+                    onClick={() => (eventId ? onSaveEvent(eventId) : undefined)}
+                    type="button"
+                  >
+                    {isSaving ? "Guardando..." : "Guardar cambios"}
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={isSaving}
+                    onClick={onCancelEditing}
+                    type="button"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h2>{event.activity || event.title || "Evento sin actividad"}</h2>
+                <p className="muted">
+                  {getEventDescription(event) || "Sin descripciÃ³n de ejecuciÃ³n."}
+                </p>
+                {getEventUser(event) ? (
+                  <p className="muted">
+                    <strong>Usuario:</strong> {getEventUser(event)}
+                  </p>
+                ) : null}
+                {canEdit && eventId ? (
+                  <button
+                    className="button secondary"
+                    onClick={() => onStartEditing(event)}
+                    type="button"
+                  >
+                    Editar
+                  </button>
+                ) : null}
+              </>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function DailyLogEvents({
+  canEdit,
+  editingActivity,
+  editingEventId,
+  editingExecutionDescription,
+  events,
+  eventTypes,
+  onCancelEditing,
+  onEditingActivityChange,
+  onEditingExecutionDescriptionChange,
+  onSaveEvent,
+  onStartEditing,
+  savingEventId,
+}: {
+  canEdit: boolean;
+  editingActivity: string;
+  editingEventId: string | null;
+  editingExecutionDescription: string;
+  events: DailyLogEvent[];
+  eventTypes: EventType[];
+  onCancelEditing: () => void;
+  onEditingActivityChange: (value: string) => void;
+  onEditingExecutionDescriptionChange: (value: string) => void;
+  onSaveEvent: (eventId: string) => void;
+  onStartEditing: (event: DailyLogEvent) => void;
+  savingEventId: string | null;
 }) {
   if (!events.length) {
     return (
