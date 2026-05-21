@@ -221,6 +221,73 @@ textarea {
   padding: 6px 10px;
 }
 
+.events-panel {
+  grid-column: 1 / -1;
+}
+
+.empty-state {
+  background: var(--surface-subtle);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.empty-state p:last-child {
+  margin-bottom: 0;
+}
+
+.timeline {
+  display: grid;
+  gap: 16px;
+}
+
+.timeline-item {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  position: relative;
+}
+
+.timeline-item::before {
+  background: var(--border);
+  bottom: -16px;
+  content: "";
+  left: 8px;
+  position: absolute;
+  top: 18px;
+  width: 1px;
+}
+
+.timeline-item:last-child::before {
+  display: none;
+}
+
+.timeline-marker {
+  background: var(--accent);
+  border: 3px solid var(--surface);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--border);
+  height: 16px;
+  margin-top: 4px;
+  width: 16px;
+  z-index: 1;
+}
+
+.timeline-card {
+  display: grid;
+  gap: 12px;
+}
+
+.timeline-card h2,
+.timeline-card p {
+  margin-bottom: 0;
+}
+
+.event-meta {
+  display: grid;
+  gap: 6px;
+}
+
 @media (max-width: 720px) {
   .topbar {
     align-items: flex-start;
