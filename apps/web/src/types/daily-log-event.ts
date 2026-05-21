@@ -3,14 +3,6 @@ export type UserSummary = {
   email?: string | null;
 };
 
-export type EventType = {
-  id: string;
-  name?: string | null;
-  label?: string | null;
-  description?: string | null;
-  code?: string | null;
-};
-
 export type DailyLogEvent = {
   id?: string;
   eventType?: {

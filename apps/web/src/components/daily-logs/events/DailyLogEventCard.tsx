@@ -1,4 +1,5 @@
-import { DailyLogEvent, EventType } from "@/types/daily-log-event";
+import { DailyLogEvent } from "@/types/daily-log-event";
+import { EventType } from "@/types/event-type";
 
 type DailyLogEventCardProps = {
   event: DailyLogEvent;
@@ -118,13 +119,11 @@ function getAttachmentCount(event: DailyLogEvent) {
 }
 
 function getEventTypeOptionLabel(eventType: EventType) {
-  return (
-    eventType.name ??
-    eventType.label ??
-    eventType.description ??
-    eventType.code ??
-    formatTechnicalId(eventType.id)
-  );
+  if (eventType.code && eventType.name) {
+    return `${eventType.code} - ${eventType.name}`;
+  }
+
+  return eventType.name ?? eventType.code ?? eventType.description ?? formatTechnicalId(eventType.id);
 }
 
 function formatTechnicalId(value: string) {

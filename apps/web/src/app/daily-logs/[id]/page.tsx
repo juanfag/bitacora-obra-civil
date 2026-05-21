@@ -12,14 +12,14 @@ import {
   WorkflowAction,
   WorkflowActions,
 } from "@/components/workflow/WorkflowActions";
-import { ApiClientError, apiRequest } from "@/lib/api-client";
+import { ApiClientError, apiRequest, getEventTypes } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
 import { DailyLog } from "@/types/daily-log";
 import {
   CreateDailyLogEventInput,
   DailyLogEvent,
-  EventType,
 } from "@/types/daily-log-event";
+import { EventType } from "@/types/event-type";
 
 export default function DailyLogDetailPage() {
   const params = useParams<{ id: string }>();
@@ -28,6 +28,7 @@ export default function DailyLogDetailPage() {
   const [dailyLogEvents, setDailyLogEvents] = useState<DailyLogEvent[]>([]);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [eventTypesError, setEventTypesError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -43,14 +44,12 @@ export default function DailyLogDetailPage() {
   const loadDailyLog = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    setEventTypesError(null);
     setNotFound(false);
 
     try {
-      const response = await apiRequest<DailyLog>(
-        `/daily-logs/${encodeURIComponent(params.id)}`,
-      );
-      const [eventTypesResponse, eventsResponse] = await Promise.all([
-        apiRequest<CollectionResponse<EventType>>("/event-types"),
+      const [response, eventsResponse] = await Promise.all([
+        apiRequest<DailyLog>(`/daily-logs/${encodeURIComponent(params.id)}`),
         apiRequest<CollectionResponse<DailyLogEvent>>(
           `/daily-log-events?dailyLogId=${encodeURIComponent(params.id)}`,
         ),
@@ -59,10 +58,25 @@ export default function DailyLogDetailPage() {
       const loadedEvents = toCollection(eventsResponse);
 
       setDailyLog(response);
-      setEventTypes(toCollection(eventTypesResponse));
       setDailyLogEvents(
         loadedEvents.length > 0 ? loadedEvents : getEventsFromDailyLog(response),
       );
+
+      try {
+        const eventTypesResponse = await getEventTypes();
+        setEventTypes(getActiveEventTypes(eventTypesResponse));
+      } catch (caughtError) {
+        setEventTypes([]);
+
+        if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        setEventTypesError(
+          "No fue posible cargar los tipos de evento. Puedes ingresar el ID manualmente temporalmente.",
+        );
+      }
     } catch (caughtError) {
       if (caughtError instanceof ApiClientError) {
         if (caughtError.status === 401) {
@@ -315,7 +329,8 @@ export default function DailyLogDetailPage() {
 
             <InfoCard className="events-panel" title="Eventos de la bitácora">
               {isDailyLogEventCreateable(dailyLog.status) ? (
-                <CreateDailyLogEventForm
+              <CreateDailyLogEventForm
+                  catalogError={eventTypesError}
                   eventTypes={eventTypes}
                   isSubmitting={isCreatingEvent}
                   onSubmit={createEvent}
@@ -381,6 +396,16 @@ function toCollection<T>(response: CollectionResponse<T>) {
 
 function getEventsFromDailyLog(dailyLog: DailyLog) {
   return dailyLog.events ?? dailyLog.dailyLogEvents ?? dailyLog.DailyLogEvents ?? [];
+}
+
+function getActiveEventTypes(eventTypes: EventType[]) {
+  return eventTypes.filter((eventType) => {
+    if (typeof eventType.isActive === "boolean") {
+      return eventType.isActive;
+    }
+
+    return !eventType.status || eventType.status === "ACTIVE";
+  });
 }
 
 function formatTechnicalId(value: string) {

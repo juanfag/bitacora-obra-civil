@@ -1,3 +1,5 @@
+import { EventType } from "@/types/event-type";
+
 export type ApiClientOptions = {
   token?: string;
   headers?: HeadersInit;
@@ -61,4 +63,8 @@ export async function apiRequest<T>(
   }
 
   return body as T;
+}
+
+export function getEventTypes() {
+  return apiRequest<EventType[]>("/event-types?status=ACTIVE");
 }

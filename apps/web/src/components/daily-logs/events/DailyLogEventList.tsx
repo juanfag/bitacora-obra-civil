@@ -1,4 +1,5 @@
-import { DailyLogEvent, EventType } from "@/types/daily-log-event";
+import { DailyLogEvent } from "@/types/daily-log-event";
+import { EventType } from "@/types/event-type";
 import { DailyLogEventCard } from "./DailyLogEventCard";
 import { EmptyEventsState } from "./EmptyEventsState";
 

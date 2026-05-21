@@ -1,18 +1,18 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import {
-  CreateDailyLogEventInput,
-  EventType,
-} from "@/types/daily-log-event";
+import { CreateDailyLogEventInput } from "@/types/daily-log-event";
+import { EventType } from "@/types/event-type";
 
 type CreateDailyLogEventFormProps = {
+  catalogError?: string | null;
   eventTypes: EventType[];
   isSubmitting: boolean;
   onSubmit: (values: CreateDailyLogEventInput) => Promise<boolean>;
 };
 
 export function CreateDailyLogEventForm({
+  catalogError = null,
   eventTypes,
   isSubmitting,
   onSubmit,
@@ -96,6 +96,10 @@ export function CreateDailyLogEventForm({
       ) : (
         <div className="field">
           <label htmlFor="eventTypeId">ID del tipo de evento</label>
+          <p className="muted">
+            No hay tipos de evento disponibles. Puedes ingresar el ID manualmente temporalmente.
+          </p>
+          {catalogError ? <p className="form-error">{catalogError}</p> : null}
           <input
             id="eventTypeId"
             name="eventTypeId"
@@ -146,13 +150,11 @@ export function CreateDailyLogEventForm({
 }
 
 function getEventTypeOptionLabel(eventType: EventType) {
-  return (
-    eventType.name ??
-    eventType.label ??
-    eventType.description ??
-    eventType.code ??
-    formatTechnicalId(eventType.id)
-  );
+  if (eventType.code && eventType.name) {
+    return `${eventType.code} - ${eventType.name}`;
+  }
+
+  return eventType.name ?? eventType.code ?? eventType.description ?? formatTechnicalId(eventType.id);
 }
 
 function formatTechnicalId(value: string) {
