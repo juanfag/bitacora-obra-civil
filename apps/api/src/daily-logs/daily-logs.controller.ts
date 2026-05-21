@@ -77,9 +77,9 @@ export class DailyLogsController {
     response.setHeader("Content-Type", "application/pdf");
     response.setHeader(
       "Content-Disposition",
-      `attachment; filename="bitacora-${id}.pdf"`,
+      `attachment; filename="${pdf.fileName}"`,
     );
-    response.send(pdf);
+    response.send(pdf.buffer);
   }
 
   @Get("daily-logs/:id")

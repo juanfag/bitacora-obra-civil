@@ -1,10 +1,49 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { RecordStatus } from "@prisma/client";
+import PDFDocument from "pdfkit";
 import { PrismaService } from "../prisma/prisma.service";
 
-type PdfLine = {
-  size?: number;
-  text: string;
+type AttachmentForPdf = {
+  originalName: string | null;
+  mimeType: string | null;
+  size: number | null;
+};
+
+type EventForPdf = {
+  activity: string | null;
+  executionDescription: string | null;
+  reportedAt: Date | null;
+  createdAt: Date;
+  eventType: {
+    code: string | null;
+    name: string | null;
+  };
+  attachments: AttachmentForPdf[];
+};
+
+type RenderContext = {
+  generatedAt: Date;
+  header: {
+    title: string;
+    date: string;
+    status: string;
+    project: string;
+  };
+};
+
+const COLORS = {
+  border: "#d7dee8",
+  muted: "#64748b",
+  primary: "#0f766e",
+  softBorder: "#e2e8f0",
+  text: "#17202a",
+};
+
+const PAGE = {
+  bottom: 68,
+  left: 54,
+  right: 54,
+  top: 58,
 };
 
 @Injectable()
@@ -42,221 +81,504 @@ export class DailyLogPdfService {
       throw new NotFoundException("Daily log not found");
     }
 
-    return createPdf([
-      { text: "Bitácora diaria de obra", size: 18 },
-      { text: "" },
-      { text: `Fecha de bitácora: ${formatDate(dailyLog.logDate)}` },
-      { text: `Estado: ${dailyLog.status}` },
-      { text: `Proyecto: ${dailyLog.project.name} (${dailyLog.project.code})` },
-      { text: `Ubicación: ${dailyLog.project.location ?? "No disponible"}` },
-      { text: `ID de bitácora: ${dailyLog.id}` },
-      { text: `Creada: ${formatDateTime(dailyLog.createdAt)}` },
-      { text: `Actualizada: ${formatDateTime(dailyLog.updatedAt)}` },
-      { text: "" },
-      { text: "Eventos", size: 14 },
-      ...this.getEventLines(dailyLog.dailyLogEvents),
-      { text: "" },
-      { text: "Firmas pendientes", size: 14 },
-      { text: "Responsable: ________________________________" },
-      { text: "Aprobador: _________________________________" },
-    ]);
-  }
-
-  private getEventLines(
-    events: Array<{
-      activity: string;
-      executionDescription: string;
-      reportedAt: Date;
-      createdAt: Date;
-      eventType: {
-        code: string;
-        name: string;
-      };
-      attachments: Array<{
-        originalName: string;
-        mimeType: string;
-        size: number;
-      }>;
-    }>,
-  ) {
-    if (events.length === 0) {
-      return [{ text: "No hay eventos registrados para esta bitácora." }];
-    }
-
-    return events.flatMap((event, index) => [
-      { text: "" },
-      { text: `${index + 1}. ${event.activity}`, size: 12 },
-      { text: `Tipo de evento: ${event.eventType.code} - ${event.eventType.name}` },
-      {
-        text: `Fecha/hora: ${formatDateTime(event.reportedAt ?? event.createdAt)}`,
+    const projectName = formatProjectName(
+      dailyLog.project.name,
+      dailyLog.project.code,
+    );
+    const context: RenderContext = {
+      generatedAt: new Date(),
+      header: {
+        date: formatDate(dailyLog.logDate),
+        project: projectName,
+        status: sanitizeText(dailyLog.status),
+        title: "Bitácora diaria de obra",
       },
-      { text: `Descripción: ${event.executionDescription}` },
+    };
+
+    const buffer = await renderPdf(context, (doc) => {
+      addHeader(doc, context);
+
+      addSectionTitle(doc, "Resumen de la bitácora");
+      addInfoGrid(doc, [
+        ["Fecha de bitácora", formatDate(dailyLog.logDate)],
+        ["Estado", dailyLog.status],
+        ["Proyecto", projectName],
+        ["Ubicación", dailyLog.project.location],
+        ["ID de bitácora", dailyLog.id],
+        ["Fecha de creación", formatDateTime(dailyLog.createdAt)],
+        ["Fecha de actualización", formatDateTime(dailyLog.updatedAt)],
+      ]);
+
+      addEventsSection(doc, dailyLog.dailyLogEvents);
+
+      addSectionTitle(doc, "Firmas pendientes");
+      addSignatureLine(doc, "Responsable");
+      addSignatureLine(doc, "Aprobador");
+    });
+
+    return {
+      buffer,
+      fileName: `bitacora-${formatDateForFileName(dailyLog.logDate)}.pdf`,
+    };
+  }
+}
+
+function renderPdf(
+  context: RenderContext,
+  draw: (doc: PDFKit.PDFDocument) => void,
+) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const doc = new PDFDocument({
+      autoFirstPage: true,
+      bufferPages: true,
+      margins: PAGE,
+      size: "LETTER",
+    });
+
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    draw(doc);
+    addFooters(doc, context);
+    doc.end();
+  });
+}
+
+function addHeader(doc: PDFKit.PDFDocument, context: RenderContext) {
+  const width = contentWidth(doc);
+  const startY = doc.y;
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(18)
+    .fillColor(COLORS.text)
+    .text(sanitizeText(context.header.title), PAGE.left, startY, {
+      width,
+    });
+
+  doc.moveDown(0.35);
+  doc
+    .font("Helvetica")
+    .fontSize(10)
+    .fillColor(COLORS.muted)
+    .text(
+      [
+        `Fecha: ${sanitizeText(context.header.date)}`,
+        `Estado: ${sanitizeText(context.header.status)}`,
+        `Proyecto: ${sanitizeText(context.header.project)}`,
+      ].join("  |  "),
       {
-        text:
-          event.attachments.length > 0
-            ? `Adjuntos (${event.attachments.length}): ${event.attachments
-                .map((attachment) => attachment.originalName)
-                .join(", ")}`
-            : "Adjuntos: 0",
+        width,
       },
-    ]);
-  }
+    );
+
+  doc.moveDown(0.9);
+  addSeparator(doc);
 }
 
-function createPdf(lines: PdfLine[]) {
-  const pages = paginateLines(lines);
-  const objects: string[] = [];
-  const catalogObjectId = 1;
-  const pagesObjectId = 2;
-  const fontObjectId = 3;
-  const firstPageObjectId = 4;
+function addSectionTitle(doc: PDFKit.PDFDocument, title: string) {
+  ensureSpace(doc, 54);
+  doc.moveDown(0.4);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(13)
+    .fillColor(COLORS.primary)
+    .text(sanitizeText(title), {
+      width: contentWidth(doc),
+    });
+  doc.moveDown(0.3);
+  addThinRule(doc);
+  doc.moveDown(0.25);
+}
 
-  objects[catalogObjectId] = `<< /Type /Catalog /Pages ${pagesObjectId} 0 R >>`;
-  objects[fontObjectId] =
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+function addInfoGrid(
+  doc: PDFKit.PDFDocument,
+  rows: Array<[string, string | null | undefined]>,
+) {
+  const labelWidth = 128;
+  const valueWidth = contentWidth(doc) - labelWidth;
 
-  pages.forEach((pageLines, pageIndex) => {
-    const pageObjectId = firstPageObjectId + pageIndex * 2;
-    const contentObjectId = pageObjectId + 1;
-    const content = createPageContent(pageLines);
-
-    objects[pageObjectId] =
-      `<< /Type /Page /Parent ${pagesObjectId} 0 R /MediaBox [0 0 612 792] ` +
-      `/Resources << /Font << /F1 ${fontObjectId} 0 R >> >> /Contents ${contentObjectId} 0 R >>`;
-    objects[contentObjectId] =
-      `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`;
+  rows.forEach(([label, value]) => {
+    ensureSpace(doc, 26);
+    const y = doc.y;
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(9.5)
+      .fillColor(COLORS.text)
+      .text(`${sanitizeText(label)}:`, PAGE.left, y, {
+        width: labelWidth,
+      });
+    doc
+      .font("Helvetica")
+      .fontSize(9.5)
+      .fillColor(COLORS.text)
+      .text(sanitizeText(value), PAGE.left + labelWidth, y, {
+        lineGap: 1.5,
+        width: valueWidth,
+      });
+    doc.y = Math.max(doc.y, y + 15);
+    doc.moveDown(0.15);
   });
-
-  const kids = pages
-    .map((_, pageIndex) => `${firstPageObjectId + pageIndex * 2} 0 R`)
-    .join(" ");
-  objects[pagesObjectId] = `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`;
-
-  return serializePdf(objects);
 }
 
-function paginateLines(lines: PdfLine[]) {
-  const pages: PdfLine[][] = [[]];
-  let y = 740;
+function addEventsSection(doc: PDFKit.PDFDocument, events: EventForPdf[]) {
+  addSectionTitle(doc, "Eventos");
 
-  for (const line of lines.flatMap(wrapLine)) {
-    const size = line.size ?? 10;
-    const lineHeight = size + 6;
-
-    if (y - lineHeight < 56) {
-      pages.push([]);
-      y = 740;
-    }
-
-    pages[pages.length - 1].push(line);
-    y -= lineHeight;
+  if (events.length === 0) {
+    addEmptyState(doc, "No hay eventos registrados para esta bitácora.");
+    return;
   }
 
-  return pages;
+  events.forEach((event, index) => addEventBlock(doc, event, index));
 }
 
-function wrapLine(line: PdfLine) {
-  const maxLength = line.size && line.size > 12 ? 64 : 92;
-  const text = line.text || " ";
+function addEventBlock(
+  doc: PDFKit.PDFDocument,
+  event: EventForPdf,
+  index: number,
+) {
+  ensureSpace(doc, 138);
 
-  if (text.length <= maxLength) {
-    return [line];
-  }
+  const blockTop = doc.y;
+  const blockPadding = 12;
+  const blockX = PAGE.left;
+  const blockWidth = contentWidth(doc);
 
-  const wrapped: PdfLine[] = [];
-  let remaining = text;
+  doc
+    .strokeColor(COLORS.softBorder)
+    .lineWidth(0.7)
+    .roundedRect(blockX, blockTop, blockWidth, 1, 1)
+    .stroke();
 
-  while (remaining.length > maxLength) {
-    const breakAt = remaining.lastIndexOf(" ", maxLength);
-    const index = breakAt > 20 ? breakAt : maxLength;
-    wrapped.push({ ...line, text: remaining.slice(0, index) });
-    remaining = remaining.slice(index).trim();
-  }
+  doc.y = blockTop + blockPadding;
+  doc.x = blockX + blockPadding;
 
-  if (remaining) {
-    wrapped.push({ ...line, text: remaining });
-  }
+  const eventType = formatEventType(event);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10.5)
+    .fillColor(COLORS.primary)
+    .text(`${index + 1}. ${eventType}`, {
+      width: blockWidth - blockPadding * 2,
+    });
 
-  return wrapped;
-}
+  doc.moveDown(0.3);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .fillColor(COLORS.text)
+    .text(sanitizeText(event.activity, "Sin actividad registrada"), {
+      width: blockWidth - blockPadding * 2,
+    });
 
-function createPageContent(lines: PdfLine[]) {
-  const commands = ["BT", "/F1 10 Tf", "50 740 Td"];
-  let previousSize = 10;
-
-  lines.forEach((line, index) => {
-    const size = line.size ?? 10;
-    const lineHeight = index === 0 ? 0 : size + 6;
-
-    if (size !== previousSize) {
-      commands.push(`/F1 ${size} Tf`);
-      previousSize = size;
-    }
-
-    if (lineHeight > 0) {
-      commands.push(`0 -${lineHeight} Td`);
-    }
-
-    commands.push(`${toPdfText(line.text || " ")} Tj`);
-  });
-
-  commands.push("ET");
-
-  return commands.join("\n");
-}
-
-function serializePdf(objects: string[]) {
-  const chunks = ["%PDF-1.4\n"];
-  const offsets = [0];
-
-  for (let objectId = 1; objectId < objects.length; objectId += 1) {
-    offsets[objectId] = Buffer.byteLength(chunks.join(""), "latin1");
-    chunks.push(`${objectId} 0 obj\n${objects[objectId]}\nendobj\n`);
-  }
-
-  const xrefOffset = Buffer.byteLength(chunks.join(""), "latin1");
-  chunks.push(`xref\n0 ${objects.length}\n`);
-  chunks.push("0000000000 65535 f \n");
-
-  for (let objectId = 1; objectId < objects.length; objectId += 1) {
-    chunks.push(`${String(offsets[objectId]).padStart(10, "0")} 00000 n \n`);
-  }
-
-  chunks.push(
-    `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
+  doc.moveDown(0.35);
+  addInlineMeta(
+    doc,
+    "Fecha/hora",
+    formatDateTime(event.reportedAt ?? event.createdAt),
+    blockWidth - blockPadding * 2,
   );
 
-  return Buffer.from(chunks.join(""), "latin1");
+  doc.moveDown(0.4);
+  addTextBlock(
+    doc,
+    "Descripción de ejecución",
+    event.executionDescription,
+    blockWidth - blockPadding * 2,
+  );
+
+  doc.moveDown(0.4);
+  addAttachmentList(doc, event.attachments, blockWidth - blockPadding * 2);
+
+  doc.x = PAGE.left;
+  doc.moveDown(0.85);
 }
 
-function toPdfText(value: string) {
-  const sanitized = value
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/[–—]/g, "-")
-    .replace(/[^\u0009\u000a\u000d\u0020-\u00ff]/g, "?")
-    .replace(/\\/g, "\\\\")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
+function addInlineMeta(
+  doc: PDFKit.PDFDocument,
+  label: string,
+  value: string | null | undefined,
+  width: number,
+) {
+  ensureSpace(doc, 24);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(COLORS.muted)
+    .text(`${sanitizeText(label)}: `, {
+      continued: true,
+      width,
+    });
+  doc.font("Helvetica").fillColor(COLORS.muted).text(sanitizeText(value));
+}
 
-  return `(${sanitized})`;
+function addTextBlock(
+  doc: PDFKit.PDFDocument,
+  label: string,
+  value: string | null | undefined,
+  width: number,
+) {
+  ensureSpace(doc, 44);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(COLORS.text)
+    .text(sanitizeText(label), {
+      width,
+    });
+  doc.moveDown(0.15);
+  doc
+    .font("Helvetica")
+    .fontSize(9.5)
+    .fillColor(COLORS.text)
+    .text(sanitizeText(value), {
+      lineGap: 2,
+      width,
+    });
+}
+
+function addAttachmentList(
+  doc: PDFKit.PDFDocument,
+  attachments: AttachmentForPdf[],
+  width: number,
+) {
+  ensureSpace(doc, 34);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(COLORS.text)
+    .text("Adjuntos", {
+      width,
+    });
+  doc.moveDown(0.18);
+
+  if (attachments.length === 0) {
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(COLORS.muted)
+      .text("Sin adjuntos", {
+        width,
+      });
+    return;
+  }
+
+  attachments.forEach((attachment) => {
+    ensureSpace(doc, 22);
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(COLORS.text)
+      .text(`- ${formatAttachment(attachment)}`, {
+        lineGap: 1,
+        width,
+      });
+  });
+}
+
+function addEmptyState(doc: PDFKit.PDFDocument, value: string) {
+  ensureSpace(doc, 68);
+  doc
+    .font("Helvetica")
+    .fontSize(10)
+    .fillColor(COLORS.muted)
+    .text(sanitizeText(value), {
+      lineGap: 2,
+      width: contentWidth(doc),
+    });
+  doc.moveDown(0.6);
+}
+
+function addSignatureLine(doc: PDFKit.PDFDocument, label: string) {
+  ensureSpace(doc, 58);
+  doc.moveDown(1);
+  doc
+    .font("Helvetica")
+    .fontSize(10)
+    .fillColor(COLORS.text)
+    .text(`${sanitizeText(label)}: ______________________________________________`, {
+      width: contentWidth(doc),
+    });
+}
+
+function addSeparator(doc: PDFKit.PDFDocument) {
+  const y = doc.y;
+  doc
+    .strokeColor(COLORS.border)
+    .lineWidth(1)
+    .moveTo(PAGE.left, y)
+    .lineTo(doc.page.width - PAGE.right, y)
+    .stroke();
+  doc.moveDown(0.8);
+}
+
+function addThinRule(doc: PDFKit.PDFDocument) {
+  const y = doc.y;
+  doc
+    .strokeColor(COLORS.softBorder)
+    .lineWidth(0.6)
+    .moveTo(PAGE.left, y)
+    .lineTo(doc.page.width - PAGE.right, y)
+    .stroke();
+}
+
+function ensureSpace(doc: PDFKit.PDFDocument, height: number) {
+  if (doc.y + height > doc.page.height - PAGE.bottom) {
+    doc.addPage();
+    doc.y = PAGE.top;
+  }
+}
+
+function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
+  const range = doc.bufferedPageRange();
+  const generatedAt = formatDateTime(context.generatedAt);
+  const footerText = `Documento generado automáticamente por Bitácora de Obra | Generado: ${generatedAt}`;
+
+  for (let index = 0; index < range.count; index += 1) {
+    doc.switchToPage(range.start + index);
+    const footerY = doc.page.height - 50;
+
+    doc
+      .strokeColor(COLORS.softBorder)
+      .lineWidth(0.6)
+      .moveTo(PAGE.left, footerY - 8)
+      .lineTo(doc.page.width - PAGE.right, footerY - 8)
+      .stroke();
+
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor(COLORS.muted)
+      .text(sanitizeText(footerText), PAGE.left, footerY, {
+        width: contentWidth(doc) - 80,
+      });
+
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor(COLORS.muted)
+      .text(`Página ${index + 1} de ${range.count}`, PAGE.left, footerY, {
+        align: "right",
+        width: contentWidth(doc),
+      });
+  }
+}
+
+function contentWidth(doc: PDFKit.PDFDocument) {
+  return doc.page.width - PAGE.left - PAGE.right;
+}
+
+function formatProjectName(name: string | null, code: string | null) {
+  const safeName = sanitizeText(name);
+  const safeCode = sanitizeText(code, "");
+
+  if (!safeCode) {
+    return safeName;
+  }
+
+  return `${safeName} (${safeCode})`;
+}
+
+function formatEventType(event: EventForPdf) {
+  const code = sanitizeText(event.eventType.code, "");
+  const name = sanitizeText(event.eventType.name, "");
+
+  if (code && name) {
+    return `${code} - ${name}`;
+  }
+
+  return code || name || "Tipo de evento no disponible";
+}
+
+function formatAttachment(attachment: AttachmentForPdf) {
+  const name = sanitizeText(attachment.originalName, "Archivo sin nombre");
+  const mime = sanitizeText(attachment.mimeType, "");
+  const size =
+    typeof attachment.size === "number" ? formatFileSize(attachment.size) : "";
+  const details = [mime, size].filter(Boolean).join(", ");
+
+  return details ? `${name} (${details})` : name;
+}
+
+function sanitizeText(
+  value: string | number | Date | null | undefined,
+  fallback = "No disponible",
+) {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+
+  const raw = value instanceof Date ? value.toISOString() : String(value);
+  const normalized = raw
+    .replace(/BitÃ¡cora/g, "Bitácora")
+    .replace(/bitÃ¡cora/g, "bitácora")
+    .replace(/PÃ¡gina/g, "Página")
+    .replace(/UbicaciÃ³n/g, "Ubicación")
+    .replace(/creaciÃ³n/g, "creación")
+    .replace(/actualizaciÃ³n/g, "actualización")
+    .replace(/DescripciÃ³n/g, "Descripción")
+    .replace(/ejecuciÃ³n/g, "ejecución")
+    .replace(/automÃ¡ticamente/g, "automáticamente")
+    .replace(/Â¿/g, "¿")
+    .replace(/Â¡/g, "¡")
+    .replace(/Ã¡/g, "á")
+    .replace(/Ã©/g, "é")
+    .replace(/Ã­/g, "í")
+    .replace(/Ã³/g, "ó")
+    .replace(/Ãº/g, "ú")
+    .replace(/Ã±/g, "ñ")
+    .replace(/Ã/g, "Á")
+    .replace(/Ã‰/g, "É")
+    .replace(/Ã/g, "Í")
+    .replace(/Ã“/g, "Ó")
+    .replace(/Ãš/g, "Ú")
+    .replace(/Ã‘/g, "Ñ")
+    .replace(/â|â|–|—/g, "-")
+    .replace(/â|â|“|”/g, '"')
+    .replace(/â|â|‘|’/g, "'")
+    .replace(/\u00a0/g, " ")
+    .trim();
+
+  return normalized || fallback;
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatDate(value: Date) {
-  return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
-    month: "short",
-    timeZone: "UTC",
-    year: "numeric",
-  }).format(value);
+  return sanitizeText(
+    new Intl.DateTimeFormat("es-CO", {
+      day: "2-digit",
+      month: "short",
+      timeZone: "UTC",
+      year: "numeric",
+    }).format(value),
+  );
 }
 
 function formatDateTime(value: Date) {
-  return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(value);
+  return sanitizeText(
+    new Intl.DateTimeFormat("es-CO", {
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(value),
+  );
+}
+
+function formatDateForFileName(value: Date) {
+  return value.toISOString().slice(0, 10);
 }
