@@ -288,6 +288,11 @@ textarea {
   gap: 6px;
 }
 
+.create-event-actions,
+.event-form {
+  margin-bottom: 18px;
+}
+
 @media (max-width: 720px) {
   .topbar {
     align-items: flex-start;

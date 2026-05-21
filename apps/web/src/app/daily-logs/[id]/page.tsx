@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
+import { CreateDailyLogEventForm } from "@/components/daily-logs/events/CreateDailyLogEventForm";
 import { DailyLogEventList } from "@/components/daily-logs/events/DailyLogEventList";
 import { InfoCard } from "@/components/ui/InfoCard";
 import { StatusBadge } from "@/components/workflow/StatusBadge";
@@ -14,7 +15,11 @@ import {
 import { ApiClientError, apiRequest } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
 import { DailyLog } from "@/types/daily-log";
-import { DailyLogEvent, EventType } from "@/types/daily-log-event";
+import {
+  CreateDailyLogEventInput,
+  DailyLogEvent,
+  EventType,
+} from "@/types/daily-log-event";
 
 export default function DailyLogDetailPage() {
   const params = useParams<{ id: string }>();
@@ -27,6 +32,7 @@ export default function DailyLogDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<string | null>(null);
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
 
   const handleUnauthorized = useCallback(() => {
@@ -135,6 +141,44 @@ export default function DailyLogDetailPage() {
       setError("No fue posible completar la acción.");
     } finally {
       setProcessingAction(null);
+    }
+  }
+
+  async function createEvent(values: CreateDailyLogEventInput) {
+    setError(null);
+    setSuccessMessage(null);
+    setIsCreatingEvent(true);
+
+    try {
+      await apiRequest<DailyLogEvent>("/daily-log-events", {
+        method: "POST",
+        body: JSON.stringify({
+          dailyLogId: params.id,
+          eventTypeId: values.eventTypeId,
+          activity: values.activity,
+          executionDescription: values.executionDescription,
+          reportedAt: new Date().toISOString(),
+        }),
+      });
+
+      await loadDailyLog();
+      setSuccessMessage("Evento creado correctamente.");
+      return true;
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError) {
+        if (caughtError.status === 401) {
+          handleUnauthorized();
+          return false;
+        }
+
+        setError(caughtError.message || "No fue posible crear el evento.");
+        return false;
+      }
+
+      setError("No fue posible crear el evento.");
+      return false;
+    } finally {
+      setIsCreatingEvent(false);
     }
   }
 
@@ -270,8 +314,15 @@ export default function DailyLogDetailPage() {
             </InfoCard>
 
             <InfoCard className="events-panel" title="Eventos de la bitácora">
+              {isDailyLogEventCreateable(dailyLog.status) ? (
+                <CreateDailyLogEventForm
+                  eventTypes={eventTypes}
+                  isSubmitting={isCreatingEvent}
+                  onSubmit={createEvent}
+                />
+              ) : null}
               <DailyLogEventList
-                canDelete={isDailyLogEditable(dailyLog.status)}
+                canDelete={canDeleteDailyLogEvents(dailyLog.status)}
                 deletingEventId={deletingEventId}
                 events={dailyLogEvents}
                 eventTypes={eventTypes}
@@ -304,7 +355,11 @@ export default function DailyLogDetailPage() {
   );
 }
 
-function isDailyLogEditable(status: string) {
+function isDailyLogEventCreateable(status: string) {
+  return status === "DRAFT" || status === "REJECTED";
+}
+
+function canDeleteDailyLogEvents(status: string) {
   return status === "DRAFT";
 }
 

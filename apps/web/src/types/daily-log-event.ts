@@ -36,3 +36,9 @@ export type DailyLogEvent = {
   attachmentCount?: number | null;
   attachmentsCount?: number | null;
 };
+
+export type CreateDailyLogEventInput = {
+  eventTypeId: string;
+  activity: string;
+  executionDescription: string;
+};
