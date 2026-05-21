@@ -90,3 +90,15 @@ uploads/
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnpm-store/
+# Generated PDFs
+*.pdf
+
+# Local generated exports
+exports/
+generated/
+
+# Windows weird temporary files
+from UI*
+
+# Upload temp artifacts
+uploads-temp/

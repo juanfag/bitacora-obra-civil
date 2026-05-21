@@ -288,6 +288,53 @@ textarea {
   gap: 6px;
 }
 
+.attachment-empty {
+  margin-bottom: 0;
+}
+
+.attachment-list {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.attachment-list h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.attachment-list ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.attachment-item {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.attachment-item a {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.attachment-upload {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.attachment-upload input[type="file"] {
+  max-width: 360px;
+}
+
 .create-event-actions,
 .event-form {
   margin-bottom: 18px;

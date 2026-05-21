@@ -15,6 +15,7 @@ import {
 import {
   ApiClientError,
   apiRequest,
+  downloadDailyLogPdf,
   getDailyLogEventAttachments,
   getEventTypes,
   uploadDailyLogEventAttachment,
@@ -44,6 +45,7 @@ export default function DailyLogDetailPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -231,6 +233,47 @@ export default function DailyLogDetailPage() {
     }
   }
 
+  async function downloadPdf() {
+    if (!dailyLog) {
+      return;
+    }
+
+    setError(null);
+    setSuccessMessage(null);
+    setIsDownloadingPdf(true);
+
+    try {
+      const pdf = await downloadDailyLogPdf(dailyLog.id);
+      const href = URL.createObjectURL(pdf);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `bitacora-${formatDateForFileName(dailyLog.logDate)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError) {
+        if (caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        if (caughtError.status === 404) {
+          setError("No fue posible encontrar la bitácora para generar el PDF.");
+          return;
+        }
+
+        setError(caughtError.message || "No fue posible descargar el PDF.");
+        return;
+      }
+
+      setError("No fue posible descargar el PDF.");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  }
+
   return (
     <AuthGuard>
       <section>
@@ -247,12 +290,22 @@ export default function DailyLogDetailPage() {
             </p>
           </div>
           {dailyLog?.projectId ? (
-            <Link
-              className="button secondary"
-              href={`/daily-logs?projectId=${dailyLog.projectId}`}
-            >
-              Volver
-            </Link>
+            <div className="toolbar">
+              <button
+                className="button secondary"
+                disabled={isDownloadingPdf}
+                onClick={downloadPdf}
+                type="button"
+              >
+                {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
+              </button>
+              <Link
+                className="button secondary"
+                href={`/daily-logs?projectId=${dailyLog.projectId}`}
+              >
+                Volver
+              </Link>
+            </div>
           ) : (
             <Link className="button secondary" href="/projects">
               Volver
@@ -436,6 +489,10 @@ function formatDate(value: string) {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(value));
+}
+
+function formatDateForFileName(value: string) {
+  return new Date(value).toISOString().slice(0, 10);
 }
 
 function formatDateTime(value: string) {

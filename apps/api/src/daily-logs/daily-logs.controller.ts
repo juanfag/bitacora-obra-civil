@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from "@nestjs/common";
 import {
@@ -39,7 +40,9 @@ import { FindDailyLogsQueryDto } from "./dto/find-daily-logs-query.dto";
 import { RejectDailyLogDto } from "./dto/reject-daily-log.dto";
 import { UpdateDailyLogDto } from "./dto/update-daily-log.dto";
 import { DailyLogsService } from "./daily-logs.service";
+import { DailyLogPdfService } from "./daily-log-pdf.service";
 import { DailyLogProjectAccessGuard } from "./guards/daily-log-project-access.guard";
+import { Response } from "express";
 
 @ApiTags("daily-logs")
 @ApiBearerAuth()
@@ -48,7 +51,10 @@ import { DailyLogProjectAccessGuard } from "./guards/daily-log-project-access.gu
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller()
 export class DailyLogsController {
-  constructor(private readonly dailyLogsService: DailyLogsService) {}
+  constructor(
+    private readonly dailyLogsService: DailyLogsService,
+    private readonly dailyLogPdfService: DailyLogPdfService,
+  ) {}
 
   @Get("daily-logs")
   @ApiOperation({ summary: "List daily logs" })
@@ -57,6 +63,23 @@ export class DailyLogsController {
   @Permissions("daily-logs:read")
   findAll(@Query() query: FindDailyLogsQueryDto) {
     return this.dailyLogsService.findAll(query);
+  }
+
+  @Get("daily-logs/:id/pdf")
+  @ApiOperation({ summary: "Download daily log PDF" })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Daily log PDF returned." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @Permissions("daily-logs:read")
+  async downloadPdf(@Param("id") id: string, @Res() response: Response) {
+    const pdf = await this.dailyLogPdfService.generate(id);
+
+    response.setHeader("Content-Type", "application/pdf");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="bitacora-${id}.pdf"`,
+    );
+    response.send(pdf);
   }
 
   @Get("daily-logs/:id")

@@ -1,3 +1,4 @@
+import { Attachment } from "@/types/attachment";
 import { EventType } from "@/types/event-type";
 
 export type ApiClientOptions = {
@@ -67,4 +68,57 @@ export async function apiRequest<T>(
 
 export function getEventTypes() {
   return apiRequest<EventType[]>("/event-types?status=ACTIVE");
+}
+
+export function getDailyLogEventAttachments(dailyLogEventId: string) {
+  return apiRequest<Attachment[]>(
+    `/daily-log-events/${encodeURIComponent(dailyLogEventId)}/attachments`,
+  );
+}
+
+export function uploadDailyLogEventAttachment(
+  dailyLogEventId: string,
+  file: File,
+) {
+  const body = new FormData();
+  body.append("dailyLogEventId", dailyLogEventId);
+  body.append("file", file);
+
+  return apiRequest<Attachment>("/attachments/upload", {
+    method: "POST",
+    body,
+  });
+}
+
+export async function downloadDailyLogPdf(dailyLogId: string) {
+  const token =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("bitacora.accessToken")
+      : null;
+  const response = await fetch(
+    `${apiBaseUrl}/daily-logs/${encodeURIComponent(dailyLogId)}/pdf`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type");
+    const body = contentType?.includes("application/json")
+      ? await response.json()
+      : await response.text();
+    const message =
+      typeof body === "object" &&
+      body !== null &&
+      "message" in body &&
+      typeof body.message === "string"
+        ? body.message
+        : `La solicitud al API falló con estado ${response.status}`;
+
+    throw new ApiClientError(message, response.status, body);
+  }
+
+  return response.blob();
 }

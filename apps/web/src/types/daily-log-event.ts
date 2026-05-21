@@ -1,3 +1,5 @@
+import { Attachment } from "./attachment";
+
 export type UserSummary = {
   fullName?: string | null;
   email?: string | null;
@@ -24,7 +26,7 @@ export type DailyLogEvent = {
   createdBy?: UserSummary | null;
   reportedBy?: UserSummary | null;
   user?: UserSummary | null;
-  attachments?: unknown[] | null;
+  attachments?: Attachment[] | null;
   attachmentCount?: number | null;
   attachmentsCount?: number | null;
 };
