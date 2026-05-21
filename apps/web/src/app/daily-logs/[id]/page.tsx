@@ -12,8 +12,18 @@ import {
   WorkflowAction,
   WorkflowActions,
 } from "@/components/workflow/WorkflowActions";
-import { ApiClientError, apiRequest, getEventTypes } from "@/lib/api-client";
+import {
+  ApiClientError,
+  apiRequest,
+  getDailyLogEventAttachments,
+  getEventTypes,
+  uploadDailyLogEventAttachment,
+} from "@/lib/api-client";
 import { logout } from "@/lib/auth";
+import {
+  canCreateDailyLogEvent,
+  isDailyLogReadOnly,
+} from "@/lib/daily-log-workflow";
 import { DailyLog } from "@/types/daily-log";
 import {
   CreateDailyLogEventInput,
@@ -34,7 +44,6 @@ export default function DailyLogDetailPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
-  const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -56,11 +65,12 @@ export default function DailyLogDetailPage() {
       ]);
 
       const loadedEvents = toCollection(eventsResponse);
+      const sourceEvents =
+        loadedEvents.length > 0 ? loadedEvents : getEventsFromDailyLog(response);
+      const eventsWithAttachments = await getEventsWithAttachments(sourceEvents);
 
       setDailyLog(response);
-      setDailyLogEvents(
-        loadedEvents.length > 0 ? loadedEvents : getEventsFromDailyLog(response),
-      );
+      setDailyLogEvents(eventsWithAttachments);
 
       try {
         const eventTypesResponse = await getEventTypes();
@@ -196,54 +206,28 @@ export default function DailyLogDetailPage() {
     }
   }
 
-  async function deleteEvent(eventId: string) {
-    const shouldDelete = window.confirm(
-      "¿Seguro que deseas eliminar este evento?",
-    );
-
-    if (!shouldDelete) {
-      return;
-    }
-
+  async function uploadAttachment(dailyLogEventId: string, file: File) {
     setError(null);
     setSuccessMessage(null);
-    setDeletingEventId(eventId);
-
-    const previousEvents = dailyLogEvents;
-    setDailyLogEvents((currentEvents) =>
-      currentEvents.filter((event) => event.id !== eventId),
-    );
 
     try {
-      await apiRequest<void>(
-        `/daily-log-events/${encodeURIComponent(eventId)}`,
-        {
-          method: "DELETE",
-        },
-      );
-
-      setSuccessMessage("Evento eliminado correctamente.");
+      await uploadDailyLogEventAttachment(dailyLogEventId, file);
+      await loadDailyLog();
+      setSuccessMessage("Adjunto cargado correctamente.");
+      return true;
     } catch (caughtError) {
-      setDailyLogEvents(previousEvents);
-
       if (caughtError instanceof ApiClientError) {
         if (caughtError.status === 401) {
           handleUnauthorized();
-          return;
+          return false;
         }
 
-        if (caughtError.status === 403 || caughtError.status === 409) {
-          setError("El evento no puede eliminarse en el estado actual de la bitácora.");
-          return;
-        }
-
-        setError("No fue posible eliminar el evento.");
-        return;
+        setError(caughtError.message || "No fue posible cargar el adjunto.");
+        return false;
       }
 
-      setError("No fue posible eliminar el evento.");
-    } finally {
-      setDeletingEventId(null);
+      setError("No fue posible cargar el adjunto.");
+      return false;
     }
   }
 
@@ -328,20 +312,27 @@ export default function DailyLogDetailPage() {
             </InfoCard>
 
             <InfoCard className="events-panel" title="Eventos de la bitácora">
-              {isDailyLogEventCreateable(dailyLog.status) ? (
-              <CreateDailyLogEventForm
+              {isDailyLogReadOnly(dailyLog.status) ? (
+                <p className="muted readonly-note">
+                  Esta bitácora está en modo solo lectura. No se pueden agregar eventos ni adjuntos.
+                </p>
+              ) : null}
+
+              {canCreateDailyLogEvent(dailyLog.status) ? (
+                <CreateDailyLogEventForm
                   catalogError={eventTypesError}
+                  dailyLogStatus={dailyLog.status}
                   eventTypes={eventTypes}
                   isSubmitting={isCreatingEvent}
                   onSubmit={createEvent}
                 />
               ) : null}
+
               <DailyLogEventList
-                canDelete={canDeleteDailyLogEvents(dailyLog.status)}
-                deletingEventId={deletingEventId}
+                dailyLogStatus={dailyLog.status}
                 events={dailyLogEvents}
                 eventTypes={eventTypes}
-                onDeleteEvent={deleteEvent}
+                onAttachmentUpload={uploadAttachment}
               />
             </InfoCard>
 
@@ -370,14 +361,6 @@ export default function DailyLogDetailPage() {
   );
 }
 
-function isDailyLogEventCreateable(status: string) {
-  return status === "DRAFT" || status === "REJECTED";
-}
-
-function canDeleteDailyLogEvents(status: string) {
-  return status === "DRAFT";
-}
-
 type CollectionResponse<T> =
   | T[]
   | {
@@ -396,6 +379,36 @@ function toCollection<T>(response: CollectionResponse<T>) {
 
 function getEventsFromDailyLog(dailyLog: DailyLog) {
   return dailyLog.events ?? dailyLog.dailyLogEvents ?? dailyLog.DailyLogEvents ?? [];
+}
+
+async function getEventsWithAttachments(events: DailyLogEvent[]) {
+  return Promise.all(
+    events.map(async (event) => {
+      if (!event.id) {
+        return {
+          ...event,
+          attachments: event.attachments ?? [],
+        };
+      }
+
+      try {
+        const attachments = await getDailyLogEventAttachments(event.id);
+        return {
+          ...event,
+          attachments,
+        };
+      } catch (caughtError) {
+        if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+          throw caughtError;
+        }
+
+        return {
+          ...event,
+          attachments: event.attachments ?? [],
+        };
+      }
+    }),
+  );
 }
 
 function getActiveEventTypes(eventTypes: EventType[]) {

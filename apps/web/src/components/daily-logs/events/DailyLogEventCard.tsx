@@ -1,18 +1,21 @@
 import { DailyLogEvent } from "@/types/daily-log-event";
 import { EventType } from "@/types/event-type";
+import { canUploadEventAttachment } from "@/lib/daily-log-workflow";
+import { EventAttachmentList } from "./EventAttachmentList";
+import { EventAttachmentUpload } from "./EventAttachmentUpload";
 
 type DailyLogEventCardProps = {
+  dailyLogStatus: string;
   event: DailyLogEvent;
   eventTypes?: EventType[];
-  isDeleting?: boolean;
-  onDelete?: (eventId: string) => void;
+  onAttachmentUpload?: (dailyLogEventId: string, file: File) => Promise<boolean>;
 };
 
 export function DailyLogEventCard({
+  dailyLogStatus,
   event,
   eventTypes = [],
-  isDeleting = false,
-  onDelete,
+  onAttachmentUpload,
 }: DailyLogEventCardProps) {
   const eventTypeLabel = getEventTypeLabel(event, eventTypes);
   const eventDate = getEventDate(event);
@@ -48,17 +51,14 @@ export function DailyLogEventCard({
         ) : null}
       </div>
 
-      {onDelete && event.id ? (
-        <div className="toolbar">
-          <button
-            className="button secondary"
-            disabled={isDeleting}
-            onClick={() => onDelete(event.id as string)}
-            type="button"
-          >
-            {isDeleting ? "Eliminando..." : "Eliminar"}
-          </button>
-        </div>
+      <EventAttachmentList attachments={event.attachments} />
+
+      {canUploadEventAttachment(dailyLogStatus) && event.id && onAttachmentUpload ? (
+        <EventAttachmentUpload
+          dailyLogEventId={event.id}
+          dailyLogStatus={dailyLogStatus}
+          onUpload={onAttachmentUpload}
+        />
       ) : null}
     </article>
   );

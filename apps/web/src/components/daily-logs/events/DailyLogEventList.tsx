@@ -4,19 +4,17 @@ import { DailyLogEventCard } from "./DailyLogEventCard";
 import { EmptyEventsState } from "./EmptyEventsState";
 
 type DailyLogEventListProps = {
-  canDelete?: boolean;
-  deletingEventId?: string | null;
+  dailyLogStatus: string;
   eventTypes?: EventType[];
   events: DailyLogEvent[];
-  onDeleteEvent?: (eventId: string) => void;
+  onAttachmentUpload?: (dailyLogEventId: string, file: File) => Promise<boolean>;
 };
 
 export function DailyLogEventList({
-  canDelete = false,
-  deletingEventId = null,
+  dailyLogStatus,
   eventTypes = [],
   events,
-  onDeleteEvent,
+  onAttachmentUpload,
 }: DailyLogEventListProps) {
   if (!events.length) {
     return <EmptyEventsState />;
@@ -28,10 +26,10 @@ export function DailyLogEventList({
         <div className="timeline-item" key={event.id ?? index}>
           <span aria-hidden="true" className="timeline-marker" />
           <DailyLogEventCard
+            dailyLogStatus={dailyLogStatus}
             event={event}
             eventTypes={eventTypes}
-            isDeleting={Boolean(event.id && deletingEventId === event.id)}
-            onDelete={canDelete ? onDeleteEvent : undefined}
+            onAttachmentUpload={onAttachmentUpload}
           />
         </div>
       ))}

@@ -1,11 +1,13 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { canCreateDailyLogEvent } from "@/lib/daily-log-workflow";
 import { CreateDailyLogEventInput } from "@/types/daily-log-event";
 import { EventType } from "@/types/event-type";
 
 type CreateDailyLogEventFormProps = {
   catalogError?: string | null;
+  dailyLogStatus: string;
   eventTypes: EventType[];
   isSubmitting: boolean;
   onSubmit: (values: CreateDailyLogEventInput) => Promise<boolean>;
@@ -13,6 +15,7 @@ type CreateDailyLogEventFormProps = {
 
 export function CreateDailyLogEventForm({
   catalogError = null,
+  dailyLogStatus,
   eventTypes,
   isSubmitting,
   onSubmit,
@@ -22,6 +25,10 @@ export function CreateDailyLogEventForm({
   const [activity, setActivity] = useState("");
   const [executionDescription, setExecutionDescription] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  if (!canCreateDailyLogEvent(dailyLogStatus)) {
+    return null;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
