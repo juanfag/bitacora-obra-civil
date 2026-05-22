@@ -1302,7 +1302,30 @@ function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
 
   for (let index = 0; index < range.count; index += 1) {
     doc.switchToPage(range.start + index);
-    const footerY = doc.page.height - 58;
+    drawFooterOnCurrentPage(doc, index + 1, range.count, generatedAt);
+  }
+
+  doc.switchToPage(originalPage);
+}
+
+function drawFooterOnCurrentPage(
+  doc: PDFKit.PDFDocument,
+  pageNumber: number,
+  pageCount: number,
+  generatedAt: string,
+) {
+  const footerY = doc.page.height - 50;
+  const previousMargins = { ...doc.page.margins };
+  const previousX = doc.x;
+  const previousY = doc.y;
+
+  try {
+    doc.page.margins = {
+      bottom: 0,
+      left: 0,
+      right: 0,
+      top: 0,
+    };
 
     doc
       .strokeColor(COLORS.softBorder)
@@ -1316,11 +1339,13 @@ function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
       .fontSize(7.8)
       .fillColor(COLORS.muted)
       .text(
-        `Documento generado por Bitácora de Obra | Generado: ${generatedAt}`,
+        `Documento generado por Bitacora de Obra | Generado: ${generatedAt}`,
         PAGE.left,
         footerY,
         {
-          width: contentWidth(doc) - 80,
+          height: 10,
+          lineBreak: false,
+          width: contentWidth(doc) - 90,
         },
       );
 
@@ -1328,8 +1353,10 @@ function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
       .font("Helvetica")
       .fontSize(7.8)
       .fillColor(COLORS.muted)
-      .text(`Página ${index + 1} de ${range.count}`, PAGE.left, footerY, {
+      .text(`Pagina ${pageNumber} de ${pageCount}`, PAGE.left, footerY, {
         align: "right",
+        height: 10,
+        lineBreak: false,
         width: contentWidth(doc),
       });
 
@@ -1338,18 +1365,21 @@ function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
       .fontSize(7.4)
       .fillColor(COLORS.muted)
       .text(
-        "Este documento corresponde al registro digital de la bitácora diaria.",
+        "Este documento corresponde al registro digital de la bitacora diaria.",
         PAGE.left,
         footerY + 13,
         {
+          height: 10,
+          lineBreak: false,
           width: contentWidth(doc),
         },
       );
+  } finally {
+    doc.page.margins = previousMargins;
+    doc.x = previousX;
+    doc.y = previousY;
   }
-
-  doc.switchToPage(originalPage);
 }
-
 function contentWidth(doc: PDFKit.PDFDocument) {
   return doc.page.width - PAGE.left - PAGE.right;
 }
@@ -1499,31 +1529,11 @@ function sanitizeText(
 
   const raw = value instanceof Date ? value.toISOString() : String(value);
   const normalized = raw
-    .replace(/BitÃ¡cora/g, "Bitácora")
-    .replace(/bitÃ¡cora/g, "bitácora")
-    .replace(/PÃ¡gina/g, "Página")
-    .replace(/UbicaciÃ³n/g, "Ubicación")
-    .replace(/creaciÃ³n/g, "creación")
-    .replace(/actualizaciÃ³n/g, "actualización")
-    .replace(/DescripciÃ³n/g, "Descripción")
-    .replace(/ejecuciÃ³n/g, "ejecución")
-    .replace(/automÃ¡ticamente/g, "automáticamente")
-    .replace(/Ã¡/g, "á")
-    .replace(/Ã©/g, "é")
-    .replace(/Ã­/g, "í")
-    .replace(/Ã³/g, "ó")
-    .replace(/Ãº/g, "ú")
-    .replace(/Ã±/g, "ñ")
-    .replace(/Ã/g, "Á")
-    .replace(/Ã‰/g, "É")
-    .replace(/Ã/g, "Í")
-    .replace(/Ã“/g, "Ó")
-    .replace(/Ãš/g, "Ú")
-    .replace(/Ã‘/g, "Ñ")
-    .replace(/â€“|â€”/g, "-")
-    .replace(/â€œ|â€/g, '"')
-    .replace(/â€˜|â€™/g, "'")
+    .normalize("NFC")
     .replace(/\u00a0/g, " ")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
     .trim();
 
   return normalized || fallback;
