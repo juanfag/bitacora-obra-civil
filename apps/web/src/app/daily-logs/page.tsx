@@ -111,9 +111,19 @@ export default function DailyLogsPage() {
               Revisa las bitacoras del proyecto seleccionado.
             </p>
           </div>
-          <Link className="button secondary" href="/projects">
-            Volver a proyectos
-          </Link>
+          <div className="toolbar">
+            {projectId ? (
+              <Link
+                className="button"
+                href={`/daily-logs/new?projectId=${encodeURIComponent(projectId)}`}
+              >
+                Nueva Bitácora
+              </Link>
+            ) : null}
+            <Link className="button secondary" href="/projects">
+              Volver a proyectos
+            </Link>
+          </div>
         </div>
 
         {hasCheckedProjectId && !projectId ? (
@@ -142,10 +152,16 @@ export default function DailyLogsPage() {
 
         {projectId && !isLoading && !error && dailyLogs.length === 0 ? (
           <div className="panel">
-            <h2>No hay bitacoras</h2>
+            <h2>No hay bitácoras</h2>
             <p className="muted">
-              Este proyecto aun no tiene bitacoras.
+              Este proyecto aún no tiene bitácoras.
             </p>
+            <Link
+              className="button"
+              href={`/daily-logs/new?projectId=${encodeURIComponent(projectId)}`}
+            >
+              Nueva Bitácora
+            </Link>
           </div>
         ) : null}
 
