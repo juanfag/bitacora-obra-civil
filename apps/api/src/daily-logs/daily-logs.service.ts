@@ -89,11 +89,29 @@ export class DailyLogsService {
   ) {
     await this.ensureProjectExists(createDailyLogDto.projectId);
     const logDate = this.toDate(createDailyLogDto.logDate);
-    await this.ensureDailyLogDoesNotExist(createDailyLogDto.projectId, logDate);
+    const existingDailyLog = await this.findDailyLogByProjectAndDate(
+      createDailyLogDto.projectId,
+      logDate,
+    );
+
+    if (existingDailyLog && existingDailyLog.status !== DailyLogStatus.VOIDED) {
+      throw new ConflictException(
+        "A daily log already exists for this project and date.",
+      );
+    }
+
     await this.ensurePreviousRequiredWorkDayIsClosed(
       createDailyLogDto.projectId,
       logDate,
     );
+
+    if (existingDailyLog) {
+      return this.restoreVoidedDailyLog(
+        existingDailyLog.id,
+        createDailyLogDto.comments,
+        audit,
+      );
+    }
 
     try {
       const dailyLog = await this.prisma.dailyLog.create({
@@ -202,7 +220,14 @@ export class DailyLogsService {
   }
 
   private toDate(value: string) {
-    return new Date(value);
+    const dateOnly = value.slice(0, 10);
+    const [year, month, day] = dateOnly.split("-").map(Number);
+
+    if (!year || !month || !day) {
+      return new Date(value);
+    }
+
+    return new Date(Date.UTC(year, month - 1, day));
   }
 
   private async ensurePreviousRequiredWorkDayIsClosed(
@@ -244,22 +269,69 @@ export class DailyLogsService {
     }
   }
 
-  private async ensureDailyLogDoesNotExist(projectId: string, logDate: Date) {
-    const dailyLog = await this.prisma.dailyLog.findFirst({
+  private async findDailyLogByProjectAndDate(projectId: string, logDate: Date) {
+    return this.prisma.dailyLog.findFirst({
       where: {
         projectId,
         logDate,
       },
       select: {
         id: true,
+        status: true,
+      },
+    });
+  }
+
+  private async restoreVoidedDailyLog(
+    id: string,
+    comments: string | undefined,
+    audit: AuditRequestContext,
+  ) {
+    const dailyLog = await this.prisma.$transaction(async (tx) => {
+      const restoredDailyLog = await tx.dailyLog.update({
+        where: { id },
+        data: {
+          status: DailyLogStatus.DRAFT,
+          comments,
+          submittedAt: null,
+          reviewedById: null,
+          reviewedAt: null,
+          approvedById: null,
+          approvedAt: null,
+          closedAt: null,
+          deletedById: null,
+          updatedById: audit.actorId,
+        },
+      });
+
+      await tx.dailyLogStatusHistory.create({
+        data: {
+          dailyLogId: id,
+          fromStatus: DailyLogStatus.VOIDED,
+          toStatus: DailyLogStatus.DRAFT,
+          changedById: audit.actorId,
+          comments: "Restored by daily log creation for the same project and date.",
+        },
+      });
+
+      return restoredDailyLog;
+    });
+
+    await this.auditService.record({
+      ...audit,
+      action: "CREATE",
+      entity: "DailyLog",
+      entityId: dailyLog.id,
+      oldValue: {
+        status: DailyLogStatus.VOIDED,
+      },
+      newValue: {
+        status: DailyLogStatus.DRAFT,
+        restoredFromVoided: true,
       },
     });
 
-    if (dailyLog) {
-      throw new ConflictException(
-        "A daily log already exists for this project and date.",
-      );
-    }
+    return dailyLog;
   }
 
   private getPreviousRequiredWorkDay(logDate: Date) {
