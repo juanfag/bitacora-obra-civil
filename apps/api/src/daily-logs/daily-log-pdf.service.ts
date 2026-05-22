@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma, RecordStatus } from "@prisma/client";
+import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import PDFDocument from "pdfkit";
 import { CurrentUserPayload } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
@@ -76,6 +78,16 @@ type EventForPdf = DailyLogForPdf["dailyLogEvents"][number];
 type AttachmentForPdf = EventForPdf["attachments"][number];
 type StatusHistoryForPdf = DailyLogForPdf["statusHistory"][number];
 
+type EventPhotoEvidence = {
+  photos: PhotoEvidence[];
+  totalImages: number;
+};
+
+type PhotoEvidence = {
+  attachment: AttachmentForPdf;
+  imageBuffer: Buffer | null;
+};
+
 type RenderContext = {
   generatedAt: Date;
   generatedBy: string;
@@ -104,6 +116,10 @@ const PAGE = {
   top: 54,
 };
 
+const MAX_PHOTO_EVIDENCE_PER_EVENT = 6;
+const PHOTO_COLUMNS = 3;
+const PHOTO_FIT: [number, number] = [146, 100];
+
 @Injectable()
 export class DailyLogPdfService {
   constructor(private readonly prisma: PrismaService) {}
@@ -131,11 +147,14 @@ export class DailyLogPdfService {
         title: "Bitácora diaria de obra",
       },
     };
+    const photoEvidenceByEventId = await buildDailyLogPhotoEvidence(
+      dailyLog.dailyLogEvents,
+    );
 
     const buffer = await renderPdf(context, (doc) => {
       addHeader(doc, context);
       addGeneralInfoSection(doc, dailyLog);
-      addEventsSection(doc, dailyLog.dailyLogEvents);
+      addEventsSection(doc, dailyLog.dailyLogEvents, photoEvidenceByEventId);
       addControlSection(doc, dailyLog, context);
       addSignatureSection(doc);
     });
@@ -168,6 +187,57 @@ function renderPdf(
     addFooters(doc, context);
     doc.end();
   });
+}
+
+async function buildDailyLogPhotoEvidence(events: EventForPdf[]) {
+  const evidenceByEventId = new Map<string, EventPhotoEvidence>();
+
+  for (const event of events) {
+    evidenceByEventId.set(event.id, await buildEventPhotoEvidenceSection(event));
+  }
+
+  return evidenceByEventId;
+}
+
+async function buildEventPhotoEvidenceSection(event: EventForPdf) {
+  const embeddableImages = event.attachments.filter(isPdfEmbeddableImage);
+  const limitedImages = embeddableImages.slice(0, MAX_PHOTO_EVIDENCE_PER_EVENT);
+  const photos = await Promise.all(
+    limitedImages.map(async (attachment) => ({
+      attachment,
+      imageBuffer: await getImageBufferForPdf(attachment),
+    })),
+  );
+
+  return {
+    photos,
+    totalImages: embeddableImages.length,
+  };
+}
+
+function isPdfEmbeddableImage(attachment: AttachmentForPdf) {
+  const mimeType = getAttachmentMimeTypeForPdf(attachment);
+
+  return mimeType === "image/jpeg" || mimeType === "image/png";
+}
+
+function resolveAttachmentFilePath(attachment: AttachmentForPdf) {
+  return attachment.storagePath || attachment.path || null;
+}
+
+async function getImageBufferForPdf(attachment: AttachmentForPdf) {
+  const filePath = resolveAttachmentFilePath(attachment);
+
+  if (!filePath || !isPdfEmbeddableImage(attachment)) {
+    return null;
+  }
+
+  try {
+    await access(filePath, constants.R_OK);
+    return await readFile(filePath);
+  } catch {
+    return null;
+  }
 }
 
 function addHeader(doc: PDFKit.PDFDocument, context: RenderContext) {
@@ -253,7 +323,11 @@ function addGeneralInfoSection(
   ]);
 }
 
-function addEventsSection(doc: PDFKit.PDFDocument, events: EventForPdf[]) {
+function addEventsSection(
+  doc: PDFKit.PDFDocument,
+  events: EventForPdf[],
+  photoEvidenceByEventId: Map<string, EventPhotoEvidence>,
+) {
   addSectionTitle(doc, "Eventos");
 
   if (events.length === 0) {
@@ -261,13 +335,21 @@ function addEventsSection(doc: PDFKit.PDFDocument, events: EventForPdf[]) {
     return;
   }
 
-  events.forEach((event, index) => addEventBlock(doc, event, index));
+  events.forEach((event, index) =>
+    addEventBlock(
+      doc,
+      event,
+      index,
+      photoEvidenceByEventId.get(event.id) ?? { photos: [], totalImages: 0 },
+    ),
+  );
 }
 
 function addEventBlock(
   doc: PDFKit.PDFDocument,
   event: EventForPdf,
   index: number,
+  photoEvidence: EventPhotoEvidence,
 ) {
   ensureSpace(doc, 152);
 
@@ -331,6 +413,7 @@ function addEventBlock(
   );
 
   addAttachmentList(doc, event.attachments, contentX, contentWidthValue);
+  addPhotoEvidenceSection(doc, photoEvidence, contentX, contentWidthValue);
   doc.x = PAGE.left;
   doc.moveDown(0.7);
 }
@@ -563,6 +646,110 @@ function addAttachmentList(
   });
 }
 
+function addPhotoEvidenceSection(
+  doc: PDFKit.PDFDocument,
+  evidence: EventPhotoEvidence,
+  x: number,
+  width: number,
+) {
+  if (evidence.totalImages === 0) {
+    return;
+  }
+
+  ensureSpace(doc, 54);
+  doc.moveDown(0.45);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(COLORS.text)
+    .text("Evidencias fotográficas", x, doc.y, {
+      width,
+    });
+  doc.moveDown(0.25);
+
+  const gap = 10;
+  const cellWidth = (width - gap * (PHOTO_COLUMNS - 1)) / PHOTO_COLUMNS;
+  const imageHeight = PHOTO_FIT[1];
+  const labelHeight = 28;
+  const cellHeight = imageHeight + labelHeight + 12;
+
+  evidence.photos.forEach((photo, index) => {
+    if (index % PHOTO_COLUMNS === 0) {
+      ensureSpace(doc, cellHeight + 10);
+    }
+
+    const column = index % PHOTO_COLUMNS;
+    const rowY = doc.y;
+    const cellX = x + column * (cellWidth + gap);
+
+    doc
+      .roundedRect(cellX, rowY, cellWidth, cellHeight, 4)
+      .strokeColor(COLORS.softBorder)
+      .lineWidth(0.6)
+      .stroke();
+
+    if (photo.imageBuffer) {
+      try {
+        doc.image(photo.imageBuffer, cellX + 5, rowY + 5, {
+          align: "center",
+          fit: PHOTO_FIT,
+          valign: "center",
+        });
+      } catch {
+        addUnavailableImageText(doc, cellX, rowY, cellWidth, imageHeight);
+      }
+    } else {
+      addUnavailableImageText(doc, cellX, rowY, cellWidth, imageHeight);
+    }
+
+    doc
+      .font("Helvetica")
+      .fontSize(7.5)
+      .fillColor(COLORS.muted)
+      .text(formatPhotoCaption(photo.attachment), cellX + 6, rowY + imageHeight + 10, {
+        lineGap: 1,
+        width: cellWidth - 12,
+      });
+
+    if (column === PHOTO_COLUMNS - 1 || index === evidence.photos.length - 1) {
+      doc.y = rowY + cellHeight + 8;
+    }
+  });
+
+  if (evidence.totalImages > MAX_PHOTO_EVIDENCE_PER_EVENT) {
+    ensureSpace(doc, 26);
+    doc
+      .font("Helvetica")
+      .fontSize(8.5)
+      .fillColor(COLORS.muted)
+      .text(
+        `Se muestran ${MAX_PHOTO_EVIDENCE_PER_EVENT} de ${evidence.totalImages} imágenes. Consulte los adjuntos digitales para ver el resto.`,
+        x,
+        doc.y,
+        {
+          width,
+        },
+      );
+  }
+}
+
+function addUnavailableImageText(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  doc
+    .font("Helvetica")
+    .fontSize(8.5)
+    .fillColor(COLORS.muted)
+    .text("Imagen no disponible", x + 8, y + height / 2 - 5, {
+      align: "center",
+      width: width - 16,
+    });
+}
+
 function addEmptyState(doc: PDFKit.PDFDocument, value: string) {
   ensureSpace(doc, 58);
   doc
@@ -703,6 +890,60 @@ function formatAttachment(attachment: AttachmentForPdf) {
   const details = [mime, size].filter(Boolean).join(", ");
 
   return details ? `${name} (${details})` : name;
+}
+
+function getAttachmentMimeTypeForPdf(attachment: AttachmentForPdf) {
+  if (attachment.mimeType) {
+    return attachment.mimeType;
+  }
+
+  const extension = getAttachmentExtensionForPdf(attachment);
+
+  if (extension === "jpg" || extension === "jpeg") {
+    return "image/jpeg";
+  }
+
+  if (extension === "png") {
+    return "image/png";
+  }
+
+  return null;
+}
+
+function getAttachmentExtensionForPdf(attachment: AttachmentForPdf) {
+  const explicitExtension = attachment.extension?.replace(".", "").toLowerCase();
+
+  if (explicitExtension) {
+    return explicitExtension;
+  }
+
+  const fileName =
+    attachment.originalFilename ||
+    attachment.originalName ||
+    attachment.sanitizedFilename ||
+    attachment.filename ||
+    "";
+  const extension = fileName.split(".").pop()?.toLowerCase();
+
+  return extension && extension !== fileName.toLowerCase() ? extension : null;
+}
+
+function formatPhotoCaption(attachment: AttachmentForPdf) {
+  const name = sanitizeText(
+    attachment.originalFilename ||
+      attachment.originalName ||
+      attachment.sanitizedFilename ||
+      attachment.filename,
+    "Imagen adjunta",
+  );
+  const size =
+    typeof attachment.sizeBytes === "number"
+      ? formatFileSize(attachment.sizeBytes)
+      : typeof attachment.size === "number"
+        ? formatFileSize(attachment.size)
+        : "";
+
+  return [name, size].filter(Boolean).join(" | ");
 }
 
 function formatPerson(
