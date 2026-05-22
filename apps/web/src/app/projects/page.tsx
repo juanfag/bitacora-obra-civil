@@ -81,6 +81,9 @@ export default function ProjectsPage() {
             </p>
           </div>
           <div className="toolbar">
+            <Link className="button" href="/projects/new">
+              Nuevo Proyecto
+            </Link>
             <Link className="button secondary" href="/daily-logs">
               Ver bitacoras
             </Link>
