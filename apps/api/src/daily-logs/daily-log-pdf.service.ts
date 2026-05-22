@@ -5,8 +5,11 @@ import { PrismaService } from "../prisma/prisma.service";
 
 type AttachmentForPdf = {
   originalName: string | null;
+  originalFilename: string | null;
+  sanitizedFilename: string | null;
   mimeType: string | null;
   size: number | null;
+  sizeBytes: number | null;
 };
 
 type EventForPdf = {
@@ -493,10 +496,19 @@ function formatEventType(event: EventForPdf) {
 }
 
 function formatAttachment(attachment: AttachmentForPdf) {
-  const name = sanitizeText(attachment.originalName, "Archivo sin nombre");
+  const name = sanitizeText(
+    attachment.originalFilename ||
+      attachment.originalName ||
+      attachment.sanitizedFilename,
+    "Archivo sin nombre",
+  );
   const mime = sanitizeText(attachment.mimeType, "");
   const size =
-    typeof attachment.size === "number" ? formatFileSize(attachment.size) : "";
+    typeof attachment.sizeBytes === "number"
+      ? formatFileSize(attachment.sizeBytes)
+      : typeof attachment.size === "number"
+        ? formatFileSize(attachment.size)
+        : "";
   const details = [mime, size].filter(Boolean).join(", ");
 
   return details ? `${name} (${details})` : name;

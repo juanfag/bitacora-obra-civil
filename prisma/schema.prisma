@@ -150,35 +150,35 @@ model User {
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  createdProjects       Project[]               @relation("ProjectCreatedBy")
-  updatedProjects       Project[]               @relation("ProjectUpdatedBy")
-  deletedProjects       Project[]               @relation("ProjectDeletedBy")
-  projectAssignments    ProjectUser[]           @relation("ProjectUserUser")
-  assignedProjectUsers  ProjectUser[]           @relation("ProjectUserAssignedBy")
-  createdDailyLogs      DailyLog[]              @relation("DailyLogCreatedBy")
-  updatedDailyLogs      DailyLog[]              @relation("DailyLogUpdatedBy")
-  deletedDailyLogs      DailyLog[]              @relation("DailyLogDeletedBy")
-  reviewedDailyLogs     DailyLog[]              @relation("DailyLogReviewedBy")
-  approvedDailyLogs     DailyLog[]              @relation("DailyLogApprovedBy")
-  dailyLogStatusChanges DailyLogStatusHistory[] @relation("DailyLogStatusChangedBy")
-  reportedDailyLogEvents DailyLogEvent[]        @relation("DailyLogEventReportedBy")
-  reportedEvents        Event[]                 @relation("EventReportedBy")
-  createdEvents         Event[]                 @relation("EventCreatedBy")
-  updatedEvents         Event[]                 @relation("EventUpdatedBy")
-  deletedEvents         Event[]                 @relation("EventDeletedBy")
-  changedEventVersions  EventVersion[]          @relation("EventVersionChangedBy")
-  eventSignatures       EventSignature[]        @relation("EventSignatureSignedBy")
-  dailyLogApprovals     DailyLogApproval[]      @relation("DailyLogApprovalApprover")
-  createdOrganizations  Organization[]          @relation("OrganizationCreatedBy")
-  updatedOrganizations  Organization[]          @relation("OrganizationUpdatedBy")
-  deletedOrganizations  Organization[]          @relation("OrganizationDeletedBy")
-  uploadedDocuments     Document[]              @relation("DocumentUploadedBy")
-  uploadedAttachments   Attachment[]            @relation("AttachmentUploadedBy")
-  createdAttachments    Attachment[]            @relation("AttachmentCreatedBy")
-  updatedAttachments    Attachment[]            @relation("AttachmentUpdatedBy")
-  deletedAttachments    Attachment[]            @relation("AttachmentDeletedBy")
-  generatedPdfVersions  DailyLogPdfVersion[]    @relation("DailyLogPdfVersionGeneratedBy")
-  performedAuditLogs    AuditLog[]              @relation("AuditLogPerformedBy")
+  createdProjects        Project[]               @relation("ProjectCreatedBy")
+  updatedProjects        Project[]               @relation("ProjectUpdatedBy")
+  deletedProjects        Project[]               @relation("ProjectDeletedBy")
+  projectAssignments     ProjectUser[]           @relation("ProjectUserUser")
+  assignedProjectUsers   ProjectUser[]           @relation("ProjectUserAssignedBy")
+  createdDailyLogs       DailyLog[]              @relation("DailyLogCreatedBy")
+  updatedDailyLogs       DailyLog[]              @relation("DailyLogUpdatedBy")
+  deletedDailyLogs       DailyLog[]              @relation("DailyLogDeletedBy")
+  reviewedDailyLogs      DailyLog[]              @relation("DailyLogReviewedBy")
+  approvedDailyLogs      DailyLog[]              @relation("DailyLogApprovedBy")
+  dailyLogStatusChanges  DailyLogStatusHistory[] @relation("DailyLogStatusChangedBy")
+  reportedDailyLogEvents DailyLogEvent[]         @relation("DailyLogEventReportedBy")
+  reportedEvents         Event[]                 @relation("EventReportedBy")
+  createdEvents          Event[]                 @relation("EventCreatedBy")
+  updatedEvents          Event[]                 @relation("EventUpdatedBy")
+  deletedEvents          Event[]                 @relation("EventDeletedBy")
+  changedEventVersions   EventVersion[]          @relation("EventVersionChangedBy")
+  eventSignatures        EventSignature[]        @relation("EventSignatureSignedBy")
+  dailyLogApprovals      DailyLogApproval[]      @relation("DailyLogApprovalApprover")
+  createdOrganizations   Organization[]          @relation("OrganizationCreatedBy")
+  updatedOrganizations   Organization[]          @relation("OrganizationUpdatedBy")
+  deletedOrganizations   Organization[]          @relation("OrganizationDeletedBy")
+  uploadedDocuments      Document[]              @relation("DocumentUploadedBy")
+  uploadedAttachments    Attachment[]            @relation("AttachmentUploadedBy")
+  createdAttachments     Attachment[]            @relation("AttachmentCreatedBy")
+  updatedAttachments     Attachment[]            @relation("AttachmentUpdatedBy")
+  deletedAttachments     Attachment[]            @relation("AttachmentDeletedBy")
+  generatedPdfVersions   DailyLogPdfVersion[]    @relation("DailyLogPdfVersionGeneratedBy")
+  performedAuditLogs     AuditLog[]              @relation("AuditLogPerformedBy")
 
   @@unique([documentType, documentNumber], map: "uq_users_document")
   @@map("users")
@@ -322,18 +322,18 @@ model DailyLog {
   createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt    DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  project       Project                 @relation(fields: [projectId], references: [id])
-  createdBy     User                    @relation("DailyLogCreatedBy", fields: [createdById], references: [id])
-  updatedBy     User?                   @relation("DailyLogUpdatedBy", fields: [updatedById], references: [id])
-  deletedBy     User?                   @relation("DailyLogDeletedBy", fields: [deletedById], references: [id])
-  reviewedBy    User?                   @relation("DailyLogReviewedBy", fields: [reviewedById], references: [id])
-  approvedBy    User?                   @relation("DailyLogApprovedBy", fields: [approvedById], references: [id])
-  events        Event[]
+  project        Project                 @relation(fields: [projectId], references: [id])
+  createdBy      User                    @relation("DailyLogCreatedBy", fields: [createdById], references: [id])
+  updatedBy      User?                   @relation("DailyLogUpdatedBy", fields: [updatedById], references: [id])
+  deletedBy      User?                   @relation("DailyLogDeletedBy", fields: [deletedById], references: [id])
+  reviewedBy     User?                   @relation("DailyLogReviewedBy", fields: [reviewedById], references: [id])
+  approvedBy     User?                   @relation("DailyLogApprovedBy", fields: [approvedById], references: [id])
+  events         Event[]
   dailyLogEvents DailyLogEvent[]
-  approvals     DailyLogApproval[]
-  statusHistory DailyLogStatusHistory[]
-  documents     DailyLogDocument[]
-  pdfVersions   DailyLogPdfVersion[]
+  approvals      DailyLogApproval[]
+  statusHistory  DailyLogStatusHistory[]
+  documents      DailyLogDocument[]
+  pdfVersions    DailyLogPdfVersion[]
 
   @@unique([projectId, logDate], map: "uq_daily_logs_project_date")
   @@index([projectId, logDate], map: "idx_daily_logs_project_date")
@@ -370,9 +370,9 @@ model DailyLogEvent {
   updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
   deletedAt            DateTime? @map("deleted_at") @db.Timestamp(6)
 
-  dailyLog   DailyLog  @relation(fields: [dailyLogId], references: [id])
-  eventType  EventType @relation(fields: [eventTypeId], references: [id])
-  reportedBy User      @relation("DailyLogEventReportedBy", fields: [reportedById], references: [id])
+  dailyLog    DailyLog     @relation(fields: [dailyLogId], references: [id])
+  eventType   EventType    @relation(fields: [eventTypeId], references: [id])
+  reportedBy  User         @relation("DailyLogEventReportedBy", fields: [reportedById], references: [id])
   attachments Attachment[]
 
   @@index([dailyLogId], map: "idx_daily_log_events_daily_log")
@@ -399,16 +399,16 @@ model Event {
   createdAt            DateTime    @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt            DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  dailyLog    DailyLog         @relation(fields: [dailyLogId], references: [id])
-  project     Project          @relation(fields: [projectId], references: [id])
-  eventType   EventType        @relation(fields: [eventTypeId], references: [id])
-  reportedBy  User             @relation("EventReportedBy", fields: [reportedById], references: [id])
-  createdBy   User?            @relation("EventCreatedBy", fields: [createdById], references: [id])
-  updatedBy   User?            @relation("EventUpdatedBy", fields: [updatedById], references: [id])
-  deletedBy   User?            @relation("EventDeletedBy", fields: [deletedById], references: [id])
-  versions    EventVersion[]
-  signatures  EventSignature[]
-  documents   EventDocument[]
+  dailyLog   DailyLog         @relation(fields: [dailyLogId], references: [id])
+  project    Project          @relation(fields: [projectId], references: [id])
+  eventType  EventType        @relation(fields: [eventTypeId], references: [id])
+  reportedBy User             @relation("EventReportedBy", fields: [reportedById], references: [id])
+  createdBy  User?            @relation("EventCreatedBy", fields: [createdById], references: [id])
+  updatedBy  User?            @relation("EventUpdatedBy", fields: [updatedById], references: [id])
+  deletedBy  User?            @relation("EventDeletedBy", fields: [deletedById], references: [id])
+  versions   EventVersion[]
+  signatures EventSignature[]
+  documents  EventDocument[]
 
   @@index([dailyLogId], map: "idx_events_daily_log")
   @@index([projectId, eventDatetime], map: "idx_events_project_date")
@@ -418,20 +418,29 @@ model Event {
 }
 
 model Attachment {
-  id              String       @id @default(uuid()) @db.Uuid
-  dailyLogEventId String       @map("daily_log_event_id") @db.Uuid
-  filename        String       @db.VarChar(250)
-  originalName    String       @map("original_name") @db.VarChar(250)
-  mimeType        String       @map("mime_type") @db.VarChar(120)
-  size            Int
-  path            String
-  uploadedById    String       @map("uploaded_by") @db.Uuid
-  createdById     String?      @map("created_by") @db.Uuid
-  updatedById     String?      @map("updated_by") @db.Uuid
-  deletedById     String?      @map("deleted_by") @db.Uuid
-  status          RecordStatus @default(ACTIVE)
-  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt       DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id                     String       @id @default(uuid()) @db.Uuid
+  dailyLogEventId        String       @map("daily_log_event_id") @db.Uuid
+  filename               String       @db.VarChar(250)
+  originalName           String       @map("original_name") @db.VarChar(250)
+  originalFilename       String?      @map("original_filename") @db.VarChar(250)
+  sanitizedFilename      String?      @map("sanitized_filename") @db.VarChar(250)
+  mimeType               String       @map("mime_type") @db.VarChar(120)
+  extension              String?      @db.VarChar(20)
+  size                   Int
+  sizeBytes              Int?         @map("size_bytes")
+  checksumSha256         String?      @map("checksum_sha256") @db.Char(64)
+  storageProvider        String       @default("local") @map("storage_provider") @db.VarChar(50)
+  path                   String
+  storagePath            String?      @map("storage_path")
+  uploadedById           String       @map("uploaded_by") @db.Uuid
+  uploadedAt             DateTime     @default(now()) @map("uploaded_at") @db.Timestamp(6)
+  isInlinePreviewAllowed Boolean      @default(false) @map("is_inline_preview_allowed")
+  createdById            String?      @map("created_by") @db.Uuid
+  updatedById            String?      @map("updated_by") @db.Uuid
+  deletedById            String?      @map("deleted_by") @db.Uuid
+  status                 RecordStatus @default(ACTIVE)
+  createdAt              DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt              DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   dailyLogEvent DailyLogEvent @relation(fields: [dailyLogEventId], references: [id])
   uploadedBy    User          @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])

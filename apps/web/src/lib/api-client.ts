@@ -116,6 +116,46 @@ export async function downloadDailyLogPdf(dailyLogId: string) {
   return response.blob();
 }
 
+export async function downloadAttachmentFile(
+  attachmentId: string,
+  disposition: "inline" | "attachment",
+) {
+  const token =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("bitacora.accessToken")
+      : null;
+  const response = await fetch(
+    `${apiBaseUrl}/attachments/${encodeURIComponent(
+      attachmentId,
+    )}/download?disposition=${encodeURIComponent(disposition)}`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type");
+    const body = contentType?.includes("application/json")
+      ? await response.json()
+      : await response.text();
+
+    throw new ApiClientError(
+      getApiErrorMessage(body, response.status),
+      response.status,
+      body,
+    );
+  }
+
+  return {
+    blob: await response.blob(),
+    fileName: getFileNameFromContentDisposition(
+      response.headers.get("content-disposition"),
+    ),
+  };
+}
+
 function getApiErrorMessage(body: unknown, status: number) {
   if (typeof body === "object" && body !== null && "message" in body) {
     const message = body.message;
@@ -134,4 +174,20 @@ function getApiErrorMessage(body: unknown, status: number) {
   }
 
   return `La solicitud al API falló con estado ${status}`;
+}
+
+function getFileNameFromContentDisposition(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const fallbackMatch = value.match(/filename="([^"]+)"/i);
+
+  return fallbackMatch?.[1] ?? null;
 }

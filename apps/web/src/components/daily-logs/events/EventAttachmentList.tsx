@@ -1,37 +1,116 @@
+﻿"use client";
+
+import { useState } from "react";
 import { Attachment } from "@/types/attachment";
+import { ApiClientError, downloadAttachmentFile } from "@/lib/api-client";
 
 type EventAttachmentListProps = {
   attachments?: Attachment[] | null;
 };
 
+type AttachmentAction = {
+  attachmentId: string;
+  action: "inline" | "attachment";
+};
+
 export function EventAttachmentList({ attachments }: EventAttachmentListProps) {
+  const [activeAction, setActiveAction] = useState<AttachmentAction | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   if (!attachments?.length) {
     return <p className="muted attachment-empty">Sin adjuntos</p>;
+  }
+
+  async function handleAttachmentAction(
+    attachment: Attachment,
+    disposition: "inline" | "attachment",
+  ) {
+    setError(null);
+    setActiveAction({ action: disposition, attachmentId: attachment.id });
+
+    try {
+      const response = await downloadAttachmentFile(attachment.id, disposition);
+      const url = URL.createObjectURL(response.blob);
+
+      if (disposition === "inline") {
+        window.open(url, "_blank", "noopener,noreferrer");
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return;
+      }
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download =
+        response.fileName ?? getAttachmentName(attachment) ?? "archivo-adjunto";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible abrir o descargar el adjunto.",
+      );
+    } finally {
+      setActiveAction(null);
+    }
   }
 
   return (
     <div className="attachment-list">
       <h3>Adjuntos</h3>
+      {error ? <p className="form-error">{error}</p> : null}
       <ul>
         {attachments.map((attachment) => {
           const fileName = getAttachmentName(attachment);
-          const href = getAttachmentHref(attachment);
+          const isPreviewable = canPreviewAttachment(attachment);
 
           return (
             <li className="attachment-item" key={attachment.id}>
               <div>
-                {href ? (
-                  <a href={href} rel="noreferrer" target="_blank">
-                    {fileName}
-                  </a>
-                ) : (
-                  <span>{fileName}</span>
-                )}
+                <span className="attachment-name">
+                  <span aria-hidden="true">{getAttachmentIcon(attachment)}</span>{" "}
+                  {fileName}
+                </span>
                 <p className="muted">
-                  {[attachment.mimeType, formatFileSize(getAttachmentSize(attachment))]
+                  {[
+                    attachment.mimeType,
+                    formatFileSize(getAttachmentSize(attachment)),
+                    formatUploadedAt(attachment.uploadedAt ?? attachment.createdAt),
+                    getUploadedByName(attachment),
+                  ]
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(" / ")}
                 </p>
+              </div>
+              <div className="attachment-actions">
+                {isPreviewable ? (
+                  <button
+                    className="button secondary"
+                    disabled={isActionLoading(activeAction, attachment.id, "inline")}
+                    onClick={() => handleAttachmentAction(attachment, "inline")}
+                    type="button"
+                  >
+                    {isActionLoading(activeAction, attachment.id, "inline")
+                      ? "Abriendo..."
+                      : "Ver"}
+                  </button>
+                ) : null}
+                <button
+                  className="button secondary"
+                  disabled={isActionLoading(
+                    activeAction,
+                    attachment.id,
+                    "attachment",
+                  )}
+                  onClick={() => handleAttachmentAction(attachment, "attachment")}
+                  type="button"
+                >
+                  {isActionLoading(activeAction, attachment.id, "attachment")
+                    ? "Descargando..."
+                    : "Descargar"}
+                </button>
               </div>
             </li>
           );
@@ -43,8 +122,10 @@ export function EventAttachmentList({ attachments }: EventAttachmentListProps) {
 
 function getAttachmentName(attachment: Attachment) {
   return (
+    attachment.originalFilename ??
     attachment.originalName ??
     attachment.fileName ??
+    attachment.sanitizedFilename ??
     attachment.filename ??
     attachment.name ??
     "Archivo adjunto"
@@ -55,16 +136,65 @@ function getAttachmentSize(attachment: Attachment) {
   return attachment.sizeBytes ?? attachment.fileSize ?? attachment.size ?? null;
 }
 
-function getAttachmentHref(attachment: Attachment) {
-  if (attachment.url) {
-    return attachment.url;
+function canPreviewAttachment(attachment: Attachment) {
+  if (typeof attachment.isInlinePreviewAllowed === "boolean") {
+    return attachment.isInlinePreviewAllowed;
   }
 
-  if (attachment.path?.startsWith("http") || attachment.path?.startsWith("/")) {
-    return attachment.path;
+  return Boolean(
+    attachment.mimeType &&
+      (attachment.mimeType.startsWith("image/") ||
+        attachment.mimeType === "application/pdf"),
+  );
+}
+
+function getAttachmentIcon(attachment: Attachment) {
+  if (attachment.mimeType?.startsWith("image/")) {
+    return "[IMG]";
   }
 
-  return null;
+  if (attachment.mimeType === "application/pdf") {
+    return "[PDF]";
+  }
+
+  return "[DOC]";
+}
+
+function getUploadedByName(attachment: Attachment) {
+  return (
+    attachment.uploadedBy?.fullName ??
+    attachment.uploadedBy?.name ??
+    attachment.uploadedBy?.email ??
+    null
+  );
+}
+
+function formatUploadedAt(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return `Subido ${date.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  })}`;
+}
+
+function isActionLoading(
+  activeAction: AttachmentAction | null,
+  attachmentId: string,
+  action: "inline" | "attachment",
+) {
+  return (
+    activeAction?.attachmentId === attachmentId && activeAction.action === action
+  );
 }
 
 function formatFileSize(size: number | null) {
