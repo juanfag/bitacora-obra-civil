@@ -284,7 +284,9 @@ function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
   return {
     code,
     hash,
-    url: `${baseUrl}/verify/daily-logs/${dailyLog.id}?code=${code}`,
+    url: `${baseUrl}/daily-logs/${encodeURIComponent(
+      dailyLog.id,
+    )}/verify?code=${encodeURIComponent(code)}`,
   };
 }
 
@@ -338,19 +340,22 @@ function buildDocumentHashPayload(dailyLog: DailyLogForPdf) {
 
 function getPublicAppUrl() {
   return (
-    process.env.PUBLIC_APP_URL ||
-    process.env.APP_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
     "http://localhost:3000"
   ).replace(/\/+$/g, "");
 }
 
 async function buildVerificationQr(url: string) {
-  return QRCode.toDataURL(url, {
-    errorCorrectionLevel: "M",
-    margin: 1,
-    scale: 4,
-    type: "image/png",
-  });
+  try {
+    return await QRCode.toDataURL(url, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      scale: 4,
+      type: "image/png",
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function buildEventPhotoEvidenceSection(event: EventForPdf) {
@@ -755,7 +760,7 @@ function addVerificationSection(
   doc: PDFKit.PDFDocument,
   dailyLog: DailyLogForPdf,
   context: RenderContext,
-  qrDataUri: string,
+  qrDataUri: string | null,
 ) {
   ensureSpace(doc, 168);
   addSectionTitle(doc, "Verificación documental");
@@ -768,23 +773,27 @@ function addVerificationSection(
     .roundedRect(x, y, width, 132, 5)
     .fillAndStroke(COLORS.fill, COLORS.softBorder);
 
-  try {
-    doc.image(qrDataUri, x + 14, y + 16, {
-      fit: [qrSize, qrSize],
-    });
-  } catch {
-    doc
-      .font("Helvetica")
-      .fontSize(8.5)
-      .fillColor(COLORS.muted)
-      .text("QR no disponible", x + 14, y + 56, {
-        align: "center",
-        width: qrSize,
+  if (qrDataUri) {
+    try {
+      doc.image(qrDataUri, x + 14, y + 16, {
+        fit: [qrSize, qrSize],
       });
+    } catch {
+      addQrFallback(doc, x + 14, y + 56, qrSize);
+    }
+  } else {
+    addQrFallback(doc, x + 14, y + 56, qrSize);
   }
 
   const textX = x + qrSize + 30;
   const textWidth = width - qrSize - 44;
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8.5)
+    .fillColor(COLORS.muted)
+    .text("Documento verificable", textX, y + 4, {
+      width: textWidth,
+    });
   const statusNote =
     dailyLog.status === "CLOSED"
       ? "Documento cerrado. Cualquier modificación posterior deberá quedar registrada como nueva trazabilidad."
@@ -837,6 +846,22 @@ function addVerificationSection(
     });
 
   doc.y = y + 146;
+}
+
+function addQrFallback(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  width: number,
+) {
+  doc
+    .font("Helvetica")
+    .fontSize(8.5)
+    .fillColor(COLORS.muted)
+    .text("QR no disponible", x, y, {
+      align: "center",
+      width,
+    });
 }
 
 function addSignatureCard(
