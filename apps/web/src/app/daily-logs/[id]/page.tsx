@@ -247,7 +247,7 @@ export default function DailyLogDetailPage() {
       const href = URL.createObjectURL(pdf);
       const link = document.createElement("a");
       link.href = href;
-      link.download = `bitacora-${formatDateForFileName(dailyLog.logDate)}.pdf`;
+      link.download = getDailyLogPdfFileName(dailyLog);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -289,7 +289,7 @@ export default function DailyLogDetailPage() {
               Revisa el estado actual de la bitácora y su información guardada.
             </p>
           </div>
-          {dailyLog?.projectId ? (
+          {dailyLog ? (
             <div className="toolbar">
               <button
                 className="button secondary"
@@ -301,7 +301,11 @@ export default function DailyLogDetailPage() {
               </button>
               <Link
                 className="button secondary"
-                href={`/daily-logs?projectId=${dailyLog.projectId}`}
+                href={
+                  dailyLog.projectId
+                    ? `/daily-logs?projectId=${dailyLog.projectId}`
+                    : "/projects"
+                }
               >
                 Volver
               </Link>
@@ -491,8 +495,24 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function formatDateForFileName(value: string) {
-  return new Date(value).toISOString().slice(0, 10);
+function getDailyLogPdfFileName(dailyLog: DailyLog) {
+  const datePart = formatDateForFileName(dailyLog.logDate);
+
+  return `bitacora-${datePart || dailyLog.id}.pdf`;
+}
+
+function formatDateForFileName(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDateTime(value: string) {
