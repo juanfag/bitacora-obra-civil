@@ -24,7 +24,6 @@ export default function NewProjectPage() {
   const router = useRouter();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [organizationId, setOrganizationId] = useState("");
-  const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
@@ -89,11 +88,6 @@ export default function NewProjectPage() {
       return;
     }
 
-    if (!code.trim()) {
-      setError("Ingresa el código del proyecto.");
-      return;
-    }
-
     if (!name.trim()) {
       setError("Ingresa el nombre del proyecto.");
       return;
@@ -107,7 +101,6 @@ export default function NewProjectPage() {
         method: "POST",
         body: JSON.stringify({
           organizationId: organizationId.trim(),
-          code: code.trim(),
           name: name.trim(),
           description: description.trim() || undefined,
           location: location.trim() || undefined,
@@ -125,7 +118,7 @@ export default function NewProjectPage() {
         }
 
         if (caughtError.status === 409) {
-          setError("Ya existe un proyecto con ese código en la organización.");
+          setError("No fue posible asignar un código único al proyecto. Intenta nuevamente.");
           return;
         }
 
@@ -192,18 +185,7 @@ export default function NewProjectPage() {
               )}
             </div>
 
-            <div className="field">
-              <label htmlFor="code">Código</label>
-              <input
-                disabled={isSubmitting}
-                id="code"
-                name="code"
-                onChange={(event) => setCode(event.target.value)}
-                placeholder="PROY-001"
-                required
-                value={code}
-              />
-            </div>
+            <p className="muted">El código se asignará automáticamente.</p>
 
             <div className="field">
               <label htmlFor="name">Nombre del proyecto</label>

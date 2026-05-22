@@ -16,11 +16,16 @@ export class CreateProjectDto {
   @IsNotEmpty()
   organizationId!: string;
 
-  @ApiProperty({ example: "PROY-DEMO-001" })
+  @ApiPropertyOptional({
+    description:
+      "Deprecated input. Project codes are generated automatically by the backend.",
+    example: "PRY-000001",
+    deprecated: true,
+  })
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
   @IsString()
-  @IsNotEmpty()
-  code!: string;
+  @IsOptional()
+  code?: string;
 
   @ApiProperty({ example: "Proyecto Demo Bitacora de Obra" })
   @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
