@@ -52,15 +52,11 @@ export async function apiRequest<T>(
     : await response.text();
 
   if (!response.ok) {
-    const message =
-      typeof body === "object" &&
-      body !== null &&
-      "message" in body &&
-      typeof body.message === "string"
-        ? body.message
-        : `La solicitud al API falló con estado ${response.status}`;
-
-    throw new ApiClientError(message, response.status, body);
+    throw new ApiClientError(
+      getApiErrorMessage(body, response.status),
+      response.status,
+      body,
+    );
   }
 
   return body as T;
@@ -109,16 +105,33 @@ export async function downloadDailyLogPdf(dailyLogId: string) {
     const body = contentType?.includes("application/json")
       ? await response.json()
       : await response.text();
-    const message =
-      typeof body === "object" &&
-      body !== null &&
-      "message" in body &&
-      typeof body.message === "string"
-        ? body.message
-        : `La solicitud al API falló con estado ${response.status}`;
 
-    throw new ApiClientError(message, response.status, body);
+    throw new ApiClientError(
+      getApiErrorMessage(body, response.status),
+      response.status,
+      body,
+    );
   }
 
   return response.blob();
+}
+
+function getApiErrorMessage(body: unknown, status: number) {
+  if (typeof body === "object" && body !== null && "message" in body) {
+    const message = body.message;
+
+    if (typeof message === "string") {
+      return message;
+    }
+
+    if (Array.isArray(message)) {
+      const messages = message.filter((item) => typeof item === "string");
+
+      if (messages.length > 0) {
+        return messages.join(" ");
+      }
+    }
+  }
+
+  return `La solicitud al API falló con estado ${status}`;
 }

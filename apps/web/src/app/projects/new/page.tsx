@@ -13,6 +13,14 @@ type Organization = {
   nit?: string | null;
 };
 
+type OrganizationCollectionResponse =
+  | Organization[]
+  | {
+      data?: Organization[];
+      items?: Organization[];
+      results?: Organization[];
+    };
+
 type Project = {
   id: string;
   name: string;
@@ -31,6 +39,8 @@ export default function NewProjectPage() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoadingOrganizations, setIsLoadingOrganizations] = useState(true);
+  const [allowManualOrganizationId, setAllowManualOrganizationId] =
+    useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -39,9 +49,13 @@ export default function NewProjectPage() {
     async function loadOrganizations() {
       setIsLoadingOrganizations(true);
       setCatalogError(null);
+      setAllowManualOrganizationId(
+        new URLSearchParams(window.location.search).get("manualOrganizationId") ===
+          "1",
+      );
 
       try {
-        const response = await apiRequest<Organization[]>(
+        const loadedOrganizations = await fetchOrganizations(
           "/organizations?status=ACTIVE",
         );
 
@@ -49,8 +63,16 @@ export default function NewProjectPage() {
           return;
         }
 
-        setOrganizations(response);
-        setOrganizationId((currentValue) => currentValue || response[0]?.id || "");
+        setOrganizations(loadedOrganizations);
+        setOrganizationId(
+          (currentValue) => currentValue || loadedOrganizations[0]?.id || "",
+        );
+
+        if (loadedOrganizations.length === 0) {
+          setCatalogError(
+            "No hay organizaciones activas disponibles para crear proyectos.",
+          );
+        }
       } catch (caughtError) {
         if (!isMounted) {
           return;
@@ -64,7 +86,7 @@ export default function NewProjectPage() {
 
         setOrganizations([]);
         setCatalogError(
-          "No fue posible cargar organizaciones. Ingresa el ID de organización manualmente.",
+          "No fue posible cargar organizaciones. Revisa tu sesión o intenta nuevamente.",
         );
       } finally {
         if (isMounted) {
@@ -84,7 +106,7 @@ export default function NewProjectPage() {
     event.preventDefault();
 
     if (!organizationId.trim()) {
-      setError("Selecciona o ingresa la organización del proyecto.");
+      setError("Selecciona la organización del proyecto.");
       return;
     }
 
@@ -155,34 +177,14 @@ export default function NewProjectPage() {
 
             <div className="field">
               <label htmlFor="organizationId">Organización</label>
-              {organizations.length > 0 ? (
-                <select
-                  disabled={isSubmitting || isLoadingOrganizations}
-                  id="organizationId"
-                  name="organizationId"
-                  onChange={(event) => setOrganizationId(event.target.value)}
-                  required
-                  value={organizationId}
-                >
-                  {organizations.map((organization) => (
-                    <option key={organization.id} value={organization.id}>
-                      {organization.nit
-                        ? `${organization.name} (${organization.nit})`
-                        : organization.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  disabled={isSubmitting}
-                  id="organizationId"
-                  name="organizationId"
-                  onChange={(event) => setOrganizationId(event.target.value)}
-                  placeholder="ID de organización"
-                  required
-                  value={organizationId}
-                />
-              )}
+              <OrganizationControl
+                allowManualOrganizationId={allowManualOrganizationId}
+                isLoadingOrganizations={isLoadingOrganizations}
+                isSubmitting={isSubmitting}
+                organizationId={organizationId}
+                organizations={organizations}
+                setOrganizationId={setOrganizationId}
+              />
             </div>
 
             <p className="muted">El código se asignará automáticamente.</p>
@@ -242,7 +244,10 @@ export default function NewProjectPage() {
               </select>
             </div>
 
-            <button disabled={isSubmitting || isLoadingOrganizations} type="submit">
+            <button
+              disabled={isSubmitting || isLoadingOrganizations || !organizationId}
+              type="submit"
+            >
               {isSubmitting ? "Creando..." : "Crear proyecto"}
             </button>
           </form>
@@ -250,4 +255,83 @@ export default function NewProjectPage() {
       </section>
     </AuthGuard>
   );
+}
+
+function OrganizationControl({
+  allowManualOrganizationId,
+  isLoadingOrganizations,
+  isSubmitting,
+  organizationId,
+  organizations,
+  setOrganizationId,
+}: {
+  allowManualOrganizationId: boolean;
+  isLoadingOrganizations: boolean;
+  isSubmitting: boolean;
+  organizationId: string;
+  organizations: Organization[];
+  setOrganizationId: (value: string) => void;
+}) {
+  if (isLoadingOrganizations) {
+    return (
+      <select disabled id="organizationId" name="organizationId">
+        <option>Cargando organizaciones...</option>
+      </select>
+    );
+  }
+
+  if (organizations.length > 0) {
+    return (
+      <select
+        disabled={isSubmitting}
+        id="organizationId"
+        name="organizationId"
+        onChange={(event) => setOrganizationId(event.target.value)}
+        required
+        value={organizationId}
+      >
+        {organizations.map((organization) => (
+          <option key={organization.id} value={organization.id}>
+            {organization.nit
+              ? `${organization.name} (${organization.nit})`
+              : organization.name}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (allowManualOrganizationId) {
+    return (
+      <input
+        disabled={isSubmitting}
+        id="organizationId"
+        name="organizationId"
+        onChange={(event) => setOrganizationId(event.target.value)}
+        placeholder="ID de organización"
+        required
+        value={organizationId}
+      />
+    );
+  }
+
+  return (
+    <select disabled id="organizationId" name="organizationId">
+      <option>No hay organizaciones disponibles</option>
+    </select>
+  );
+}
+
+async function fetchOrganizations(path: string) {
+  return toOrganizationCollection(
+    await apiRequest<OrganizationCollectionResponse>(path),
+  );
+}
+
+function toOrganizationCollection(response: OrganizationCollectionResponse) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  return response.data ?? response.items ?? response.results ?? [];
 }
