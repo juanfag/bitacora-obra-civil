@@ -71,8 +71,12 @@ export class DailyLogsController {
   @ApiOkResponse({ description: "Daily log PDF returned." })
   @ApiNotFoundResponse({ description: "Daily log not found." })
   @Permissions("daily-logs:read")
-  async downloadPdf(@Param("id") id: string, @Res() response: Response) {
-    const pdf = await this.dailyLogPdfService.generate(id);
+  async downloadPdf(
+    @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Res() response: Response,
+  ) {
+    const pdf = await this.dailyLogPdfService.generate(id, user);
 
     response.setHeader("Content-Type", "application/pdf");
     response.setHeader(

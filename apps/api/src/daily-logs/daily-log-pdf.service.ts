@@ -1,41 +1,96 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { RecordStatus } from "@prisma/client";
+import { Prisma, RecordStatus } from "@prisma/client";
 import PDFDocument from "pdfkit";
+import { CurrentUserPayload } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 
-type AttachmentForPdf = {
-  originalName: string | null;
-  originalFilename: string | null;
-  sanitizedFilename: string | null;
-  mimeType: string | null;
-  size: number | null;
-  sizeBytes: number | null;
-};
+const dailyLogPdfInclude = {
+  approvedBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+  createdBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+  dailyLogEvents: {
+    where: {
+      deletedAt: null,
+    },
+    include: {
+      attachments: {
+        where: {
+          status: RecordStatus.ACTIVE,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      },
+      eventType: true,
+      reportedBy: {
+        select: {
+          email: true,
+          fullName: true,
+        },
+      },
+    },
+    orderBy: {
+      reportedAt: "asc",
+    },
+  },
+  project: {
+    include: {
+      organization: true,
+    },
+  },
+  reviewedBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+  statusHistory: {
+    include: {
+      changedBy: {
+        select: {
+          email: true,
+          fullName: true,
+        },
+      },
+    },
+    orderBy: {
+      changedAt: "asc",
+    },
+  },
+} satisfies Prisma.DailyLogInclude;
 
-type EventForPdf = {
-  activity: string | null;
-  executionDescription: string | null;
-  reportedAt: Date | null;
-  createdAt: Date;
-  eventType: {
-    code: string | null;
-    name: string | null;
-  };
-  attachments: AttachmentForPdf[];
-};
+type DailyLogForPdf = Prisma.DailyLogGetPayload<{
+  include: typeof dailyLogPdfInclude;
+}>;
+
+type EventForPdf = DailyLogForPdf["dailyLogEvents"][number];
+type AttachmentForPdf = EventForPdf["attachments"][number];
+type StatusHistoryForPdf = DailyLogForPdf["statusHistory"][number];
 
 type RenderContext = {
   generatedAt: Date;
+  generatedBy: string;
   header: {
-    title: string;
-    date: string;
-    status: string;
+    organization: string;
     project: string;
+    status: string;
+    subtitle: string;
+    title: string;
   };
 };
 
 const COLORS = {
-  border: "#d7dee8",
+  border: "#cbd5e1",
+  fill: "#f8fafc",
   muted: "#64748b",
   primary: "#0f766e",
   softBorder: "#e2e8f0",
@@ -43,80 +98,46 @@ const COLORS = {
 };
 
 const PAGE = {
-  bottom: 68,
+  bottom: 74,
   left: 54,
   right: 54,
-  top: 58,
+  top: 54,
 };
 
 @Injectable()
 export class DailyLogPdfService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async generate(id: string) {
+  async generate(id: string, generatedBy?: CurrentUserPayload) {
     const dailyLog = await this.prisma.dailyLog.findUnique({
       where: { id },
-      include: {
-        project: true,
-        dailyLogEvents: {
-          where: {
-            deletedAt: null,
-          },
-          include: {
-            eventType: true,
-            attachments: {
-              where: {
-                status: RecordStatus.ACTIVE,
-              },
-              orderBy: {
-                createdAt: "asc",
-              },
-            },
-          },
-          orderBy: {
-            reportedAt: "asc",
-          },
-        },
-      },
+      include: dailyLogPdfInclude,
     });
 
     if (!dailyLog) {
       throw new NotFoundException("Daily log not found");
     }
 
-    const projectName = formatProjectName(
-      dailyLog.project.name,
-      dailyLog.project.code,
-    );
     const context: RenderContext = {
       generatedAt: new Date(),
+      generatedBy: formatPerson(generatedBy),
       header: {
-        date: formatDate(dailyLog.logDate),
-        project: projectName,
-        status: sanitizeText(dailyLog.status),
+        organization: sanitizeText(dailyLog.project.organization?.name, ""),
+        project: formatProjectName(dailyLog.project.name, dailyLog.project.code),
+        status: formatStatus(dailyLog.status),
+        subtitle: `Fecha de bitácora: ${formatDate(dailyLog.logDate)} | ID: ${shortId(
+          dailyLog.id,
+        )}`,
         title: "Bitácora diaria de obra",
       },
     };
 
     const buffer = await renderPdf(context, (doc) => {
       addHeader(doc, context);
-
-      addSectionTitle(doc, "Resumen de la bitácora");
-      addInfoGrid(doc, [
-        ["Fecha de bitácora", formatDate(dailyLog.logDate)],
-        ["Estado", dailyLog.status],
-        ["Proyecto", projectName],
-        ["Ubicación", dailyLog.project.location],
-        ["ID de bitácora", dailyLog.id],
-        ["Fecha de creación", formatDateTime(dailyLog.createdAt)],
-        ["Fecha de actualización", formatDateTime(dailyLog.updatedAt)],
-      ]);
-
+      addGeneralInfoSection(doc, dailyLog);
       addEventsSection(doc, dailyLog.dailyLogEvents);
-
-      addSectionTitle(doc, "Firmas pendientes");
-      addSignatureLine(doc, "Responsable");
-      addSignatureLine(doc, "Aprobador");
+      addControlSection(doc, dailyLog, context);
+      addSignatureSection(doc);
     });
 
     return {
@@ -154,76 +175,82 @@ function addHeader(doc: PDFKit.PDFDocument, context: RenderContext) {
   const startY = doc.y;
 
   doc
+    .roundedRect(PAGE.left, startY, width, 94, 6)
+    .fillAndStroke(COLORS.fill, COLORS.border);
+
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor(COLORS.muted)
+    .text(
+      context.header.organization || "Organización no disponible",
+      PAGE.left + 16,
+      startY + 14,
+      { width: width - 32 },
+    );
+
+  doc
     .font("Helvetica-Bold")
     .fontSize(18)
     .fillColor(COLORS.text)
-    .text(sanitizeText(context.header.title), PAGE.left, startY, {
-      width,
+    .text(context.header.title, PAGE.left + 16, startY + 31, {
+      width: width - 32,
     });
 
-  doc.moveDown(0.35);
   doc
     .font("Helvetica")
     .fontSize(10)
-    .fillColor(COLORS.muted)
-    .text(
-      [
-        `Fecha: ${sanitizeText(context.header.date)}`,
-        `Estado: ${sanitizeText(context.header.status)}`,
-        `Proyecto: ${sanitizeText(context.header.project)}`,
-      ].join("  |  "),
-      {
-        width,
-      },
-    );
+    .fillColor(COLORS.text)
+    .text(context.header.project, PAGE.left + 16, startY + 56, {
+      width: width - 180,
+    });
 
-  doc.moveDown(0.9);
-  addSeparator(doc);
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor(COLORS.muted)
+    .text(context.header.subtitle, PAGE.left + 16, startY + 72, {
+      width: width - 32,
+    });
+
+  addStatusPill(doc, context.header.status, PAGE.left + width - 150, startY + 28);
+
+  doc.y = startY + 112;
 }
 
-function addSectionTitle(doc: PDFKit.PDFDocument, title: string) {
-  ensureSpace(doc, 54);
-  doc.moveDown(0.4);
+function addStatusPill(
+  doc: PDFKit.PDFDocument,
+  status: string,
+  x: number,
+  y: number,
+) {
+  doc.roundedRect(x, y, 122, 24, 12).fill(COLORS.primary);
   doc
     .font("Helvetica-Bold")
-    .fontSize(13)
-    .fillColor(COLORS.primary)
-    .text(sanitizeText(title), {
-      width: contentWidth(doc),
+    .fontSize(9)
+    .fillColor("#ffffff")
+    .text(status, x + 10, y + 7, {
+      align: "center",
+      width: 102,
     });
-  doc.moveDown(0.3);
-  addThinRule(doc);
-  doc.moveDown(0.25);
 }
 
-function addInfoGrid(
+function addGeneralInfoSection(
   doc: PDFKit.PDFDocument,
-  rows: Array<[string, string | null | undefined]>,
+  dailyLog: DailyLogForPdf,
 ) {
-  const labelWidth = 128;
-  const valueWidth = contentWidth(doc) - labelWidth;
-
-  rows.forEach(([label, value]) => {
-    ensureSpace(doc, 26);
-    const y = doc.y;
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(9.5)
-      .fillColor(COLORS.text)
-      .text(`${sanitizeText(label)}:`, PAGE.left, y, {
-        width: labelWidth,
-      });
-    doc
-      .font("Helvetica")
-      .fontSize(9.5)
-      .fillColor(COLORS.text)
-      .text(sanitizeText(value), PAGE.left + labelWidth, y, {
-        lineGap: 1.5,
-        width: valueWidth,
-      });
-    doc.y = Math.max(doc.y, y + 15);
-    doc.moveDown(0.15);
-  });
+  addSectionTitle(doc, "Información general");
+  addInfoGrid(doc, [
+    ["Proyecto", formatProjectName(dailyLog.project.name, dailyLog.project.code)],
+    ["Organización", dailyLog.project.organization?.name],
+    ["Ubicación", dailyLog.project.location],
+    ["Responsable / creador", formatPerson(dailyLog.createdBy)],
+    ["Fecha de bitácora", formatDate(dailyLog.logDate)],
+    ["Fecha de creación", formatDateTime(dailyLog.createdAt)],
+    ["Fecha de aprobación", formatDateTime(dailyLog.approvedAt)],
+    ["Fecha de cierre", formatDateTime(dailyLog.closedAt)],
+    ["Comentarios generales", dailyLog.comments],
+  ]);
 }
 
 function addEventsSection(doc: PDFKit.PDFDocument, events: EventForPdf[]) {
@@ -242,101 +269,254 @@ function addEventBlock(
   event: EventForPdf,
   index: number,
 ) {
-  ensureSpace(doc, 138);
+  ensureSpace(doc, 152);
 
-  const blockTop = doc.y;
-  const blockPadding = 12;
   const blockX = PAGE.left;
   const blockWidth = contentWidth(doc);
+  const contentX = blockX + 12;
+  const contentWidthValue = blockWidth - 24;
+  const topY = doc.y;
 
   doc
     .strokeColor(COLORS.softBorder)
-    .lineWidth(0.7)
-    .roundedRect(blockX, blockTop, blockWidth, 1, 1)
+    .lineWidth(0.8)
+    .moveTo(blockX, topY)
+    .lineTo(blockX + blockWidth, topY)
     .stroke();
 
-  doc.y = blockTop + blockPadding;
-  doc.x = blockX + blockPadding;
+  doc.y = topY + 10;
+  doc.x = contentX;
 
-  const eventType = formatEventType(event);
+  const eventDate = formatDateTime(event.reportedAt ?? event.createdAt);
   doc
     .font("Helvetica-Bold")
     .fontSize(10.5)
     .fillColor(COLORS.primary)
-    .text(`${index + 1}. ${eventType}`, {
-      width: blockWidth - blockPadding * 2,
+    .text(`${index + 1}. ${formatEventType(event)}`, contentX, doc.y, {
+      width: contentWidthValue - 132,
     });
 
-  doc.moveDown(0.3);
   doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
-    .fillColor(COLORS.text)
-    .text(sanitizeText(event.activity, "Sin actividad registrada"), {
-      width: blockWidth - blockPadding * 2,
+    .font("Helvetica")
+    .fontSize(8.5)
+    .fillColor(COLORS.muted)
+    .text(eventDate, contentX + contentWidthValue - 126, topY + 12, {
+      align: "right",
+      width: 126,
     });
 
   doc.moveDown(0.35);
-  addInlineMeta(
+  addKeyValueLine(doc, "Actividad", event.activity, contentX, contentWidthValue);
+  addKeyValueLine(
     doc,
-    "Fecha/hora",
-    formatDateTime(event.reportedAt ?? event.createdAt),
-    blockWidth - blockPadding * 2,
+    "Reportado por",
+    formatPerson(event.reportedBy),
+    contentX,
+    contentWidthValue,
+  );
+  addKeyValueLine(
+    doc,
+    "Adjuntos",
+    `${event.attachments.length}`,
+    contentX,
+    contentWidthValue,
   );
 
-  doc.moveDown(0.4);
   addTextBlock(
     doc,
     "Descripción de ejecución",
     event.executionDescription,
-    blockWidth - blockPadding * 2,
+    contentX,
+    contentWidthValue,
   );
 
-  doc.moveDown(0.4);
-  addAttachmentList(doc, event.attachments, blockWidth - blockPadding * 2);
-
+  addAttachmentList(doc, event.attachments, contentX, contentWidthValue);
   doc.x = PAGE.left;
-  doc.moveDown(0.85);
+  doc.moveDown(0.7);
 }
 
-function addInlineMeta(
+function addControlSection(
+  doc: PDFKit.PDFDocument,
+  dailyLog: DailyLogForPdf,
+  context: RenderContext,
+) {
+  addSectionTitle(doc, "Control");
+  addInfoGrid(doc, [
+    ["Estado actual", formatStatus(dailyLog.status)],
+    ["Generado por", context.generatedBy],
+    ["Fecha/hora de generación", formatDateTime(context.generatedAt)],
+  ]);
+
+  addStatusHistory(doc, dailyLog.statusHistory);
+}
+
+function addStatusHistory(
+  doc: PDFKit.PDFDocument,
+  statusHistory: StatusHistoryForPdf[],
+) {
+  ensureSpace(doc, 42);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9.5)
+    .fillColor(COLORS.text)
+    .text("Historial básico", PAGE.left, doc.y, {
+      width: contentWidth(doc),
+    });
+  doc.moveDown(0.2);
+
+  if (statusHistory.length === 0) {
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(COLORS.muted)
+      .text("Sin cambios de estado registrados.", {
+        width: contentWidth(doc),
+      });
+    return;
+  }
+
+  statusHistory.forEach((item) => {
+    ensureSpace(doc, 24);
+    const line = `${formatDateTime(item.changedAt)} - ${formatStatus(
+      item.fromStatus,
+    )} a ${formatStatus(item.toStatus)} - ${formatPerson(item.changedBy)}`;
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(COLORS.text)
+      .text(line, {
+        lineGap: 1.2,
+        width: contentWidth(doc),
+      });
+    if (item.comments) {
+      doc
+        .font("Helvetica")
+        .fontSize(8.5)
+        .fillColor(COLORS.muted)
+        .text(`Comentario: ${sanitizeText(item.comments)}`, {
+          lineGap: 1.2,
+          width: contentWidth(doc),
+        });
+    }
+  });
+}
+
+function addSignatureSection(doc: PDFKit.PDFDocument) {
+  addSectionTitle(doc, "Firmas pendientes");
+  addSignatureLine(doc, "Responsable");
+  addSignatureLine(doc, "Aprobador");
+}
+
+function addSectionTitle(doc: PDFKit.PDFDocument, title: string) {
+  ensureSpace(doc, 52);
+  doc.moveDown(0.25);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(13)
+    .fillColor(COLORS.primary)
+    .text(title, PAGE.left, doc.y, {
+      width: contentWidth(doc),
+    });
+  doc.moveDown(0.24);
+  addThinRule(doc);
+  doc.moveDown(0.35);
+}
+
+function addInfoGrid(
+  doc: PDFKit.PDFDocument,
+  rows: Array<[string, string | null | undefined]>,
+) {
+  const gap = 18;
+  const columnWidth = (contentWidth(doc) - gap) / 2;
+
+  for (let index = 0; index < rows.length; index += 2) {
+    ensureSpace(doc, 38);
+    const y = doc.y;
+    addInfoCell(doc, rows[index], PAGE.left, y, columnWidth);
+
+    if (rows[index + 1]) {
+      addInfoCell(doc, rows[index + 1], PAGE.left + columnWidth + gap, y, columnWidth);
+    }
+
+    doc.y = Math.max(doc.y, y + 34);
+    doc.moveDown(0.18);
+  }
+}
+
+function addInfoCell(
+  doc: PDFKit.PDFDocument,
+  row: [string, string | null | undefined],
+  x: number,
+  y: number,
+  width: number,
+) {
+  const [label, value] = row;
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8.5)
+    .fillColor(COLORS.muted)
+    .text(label.toUpperCase(), x, y, {
+      width,
+    });
+  doc
+    .font("Helvetica")
+    .fontSize(9.5)
+    .fillColor(COLORS.text)
+    .text(sanitizeText(value), x, y + 12, {
+      lineGap: 1.5,
+      width,
+    });
+}
+
+function addKeyValueLine(
   doc: PDFKit.PDFDocument,
   label: string,
   value: string | null | undefined,
+  x: number,
   width: number,
 ) {
-  ensureSpace(doc, 24);
+  ensureSpace(doc, 22);
+  const y = doc.y;
   doc
     .font("Helvetica-Bold")
     .fontSize(9)
-    .fillColor(COLORS.muted)
-    .text(`${sanitizeText(label)}: `, {
-      continued: true,
-      width,
+    .fillColor(COLORS.text)
+    .text(`${label}:`, x, y, {
+      width: 88,
     });
-  doc.font("Helvetica").fillColor(COLORS.muted).text(sanitizeText(value));
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor(COLORS.text)
+    .text(sanitizeText(value), x + 92, y, {
+      lineGap: 1.3,
+      width: width - 92,
+    });
+  doc.y = Math.max(doc.y, y + 14);
 }
 
 function addTextBlock(
   doc: PDFKit.PDFDocument,
   label: string,
   value: string | null | undefined,
+  x: number,
   width: number,
 ) {
-  ensureSpace(doc, 44);
+  ensureSpace(doc, 52);
+  doc.moveDown(0.25);
   doc
     .font("Helvetica-Bold")
     .fontSize(9)
     .fillColor(COLORS.text)
-    .text(sanitizeText(label), {
+    .text(label, x, doc.y, {
       width,
     });
-  doc.moveDown(0.15);
+  doc.moveDown(0.18);
   doc
     .font("Helvetica")
-    .fontSize(9.5)
+    .fontSize(9.3)
     .fillColor(COLORS.text)
-    .text(sanitizeText(value), {
+    .text(sanitizeText(value), x, doc.y, {
       lineGap: 2,
       width,
     });
@@ -345,14 +525,16 @@ function addTextBlock(
 function addAttachmentList(
   doc: PDFKit.PDFDocument,
   attachments: AttachmentForPdf[],
+  x: number,
   width: number,
 ) {
-  ensureSpace(doc, 34);
+  ensureSpace(doc, 38);
+  doc.moveDown(0.35);
   doc
     .font("Helvetica-Bold")
     .fontSize(9)
     .fillColor(COLORS.text)
-    .text("Adjuntos", {
+    .text("Listado de adjuntos", x, doc.y, {
       width,
     });
   doc.moveDown(0.18);
@@ -362,59 +544,50 @@ function addAttachmentList(
       .font("Helvetica")
       .fontSize(9)
       .fillColor(COLORS.muted)
-      .text("Sin adjuntos", {
+      .text("Sin adjuntos", x, doc.y, {
         width,
       });
     return;
   }
 
   attachments.forEach((attachment) => {
-    ensureSpace(doc, 22);
+    ensureSpace(doc, 24);
     doc
       .font("Helvetica")
-      .fontSize(9)
+      .fontSize(8.8)
       .fillColor(COLORS.text)
-      .text(`- ${formatAttachment(attachment)}`, {
-        lineGap: 1,
+      .text(`- ${formatAttachment(attachment)}`, x, doc.y, {
+        lineGap: 1.2,
         width,
       });
   });
 }
 
 function addEmptyState(doc: PDFKit.PDFDocument, value: string) {
-  ensureSpace(doc, 68);
+  ensureSpace(doc, 58);
+  doc
+    .roundedRect(PAGE.left, doc.y, contentWidth(doc), 42, 5)
+    .fillAndStroke(COLORS.fill, COLORS.softBorder);
   doc
     .font("Helvetica")
     .fontSize(10)
     .fillColor(COLORS.muted)
-    .text(sanitizeText(value), {
-      lineGap: 2,
-      width: contentWidth(doc),
+    .text(sanitizeText(value), PAGE.left + 14, doc.y + 14, {
+      width: contentWidth(doc) - 28,
     });
-  doc.moveDown(0.6);
+  doc.moveDown(2.2);
 }
 
 function addSignatureLine(doc: PDFKit.PDFDocument, label: string) {
   ensureSpace(doc, 58);
-  doc.moveDown(1);
+  doc.moveDown(0.9);
   doc
     .font("Helvetica")
     .fontSize(10)
     .fillColor(COLORS.text)
-    .text(`${sanitizeText(label)}: ______________________________________________`, {
+    .text(`${label}: ______________________________________________`, PAGE.left, doc.y, {
       width: contentWidth(doc),
     });
-}
-
-function addSeparator(doc: PDFKit.PDFDocument) {
-  const y = doc.y;
-  doc
-    .strokeColor(COLORS.border)
-    .lineWidth(1)
-    .moveTo(PAGE.left, y)
-    .lineTo(doc.page.width - PAGE.right, y)
-    .stroke();
-  doc.moveDown(0.8);
 }
 
 function addThinRule(doc: PDFKit.PDFDocument) {
@@ -437,11 +610,10 @@ function ensureSpace(doc: PDFKit.PDFDocument, height: number) {
 function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
   const range = doc.bufferedPageRange();
   const generatedAt = formatDateTime(context.generatedAt);
-  const footerText = `Documento generado automáticamente por Bitácora de Obra | Generado: ${generatedAt}`;
 
   for (let index = 0; index < range.count; index += 1) {
     doc.switchToPage(range.start + index);
-    const footerY = doc.page.height - 50;
+    const footerY = doc.page.height - 58;
 
     doc
       .strokeColor(COLORS.softBorder)
@@ -452,20 +624,38 @@ function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
 
     doc
       .font("Helvetica")
-      .fontSize(8)
+      .fontSize(7.8)
       .fillColor(COLORS.muted)
-      .text(sanitizeText(footerText), PAGE.left, footerY, {
-        width: contentWidth(doc) - 80,
-      });
+      .text(
+        `Documento generado por Bitácora de Obra | Generado: ${generatedAt}`,
+        PAGE.left,
+        footerY,
+        {
+          width: contentWidth(doc) - 80,
+        },
+      );
 
     doc
       .font("Helvetica")
-      .fontSize(8)
+      .fontSize(7.8)
       .fillColor(COLORS.muted)
       .text(`Página ${index + 1} de ${range.count}`, PAGE.left, footerY, {
         align: "right",
         width: contentWidth(doc),
       });
+
+    doc
+      .font("Helvetica")
+      .fontSize(7.4)
+      .fillColor(COLORS.muted)
+      .text(
+        "Este documento corresponde al registro digital de la bitácora diaria.",
+        PAGE.left,
+        footerY + 13,
+        {
+          width: contentWidth(doc),
+        },
+      );
   }
 }
 
@@ -499,7 +689,8 @@ function formatAttachment(attachment: AttachmentForPdf) {
   const name = sanitizeText(
     attachment.originalFilename ||
       attachment.originalName ||
-      attachment.sanitizedFilename,
+      attachment.sanitizedFilename ||
+      attachment.filename,
     "Archivo sin nombre",
   );
   const mime = sanitizeText(attachment.mimeType, "");
@@ -512,6 +703,45 @@ function formatAttachment(attachment: AttachmentForPdf) {
   const details = [mime, size].filter(Boolean).join(", ");
 
   return details ? `${name} (${details})` : name;
+}
+
+function formatPerson(
+  value:
+    | CurrentUserPayload
+    | { email: string | null; fullName: string | null }
+    | null
+    | undefined,
+) {
+  if (!value) {
+    return "No disponible";
+  }
+
+  const name = sanitizeText(value.fullName, "");
+  const email = sanitizeText(value.email, "");
+
+  if (name && email) {
+    return `${name} <${email}>`;
+  }
+
+  return name || email || "No disponible";
+}
+
+function formatStatus(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    APPROVED: "Aprobada",
+    CANCELLED: "Cancelada",
+    CLOSED: "Cerrada",
+    DRAFT: "Borrador",
+    IN_REVIEW: "En revisión",
+    REJECTED: "Rechazada",
+    VOIDED: "Anulada",
+  };
+
+  return value ? labels[value] || value : "No disponible";
+}
+
+function shortId(value: string) {
+  return value.slice(0, 8);
 }
 
 function sanitizeText(
@@ -533,8 +763,6 @@ function sanitizeText(
     .replace(/DescripciÃ³n/g, "Descripción")
     .replace(/ejecuciÃ³n/g, "ejecución")
     .replace(/automÃ¡ticamente/g, "automáticamente")
-    .replace(/Â¿/g, "¿")
-    .replace(/Â¡/g, "¡")
     .replace(/Ã¡/g, "á")
     .replace(/Ã©/g, "é")
     .replace(/Ã­/g, "í")
@@ -547,9 +775,9 @@ function sanitizeText(
     .replace(/Ã“/g, "Ó")
     .replace(/Ãš/g, "Ú")
     .replace(/Ã‘/g, "Ñ")
-    .replace(/â|â|–|—/g, "-")
-    .replace(/â|â|“|”/g, '"')
-    .replace(/â|â|‘|’/g, "'")
+    .replace(/â€“|â€”/g, "-")
+    .replace(/â€œ|â€/g, '"')
+    .replace(/â€˜|â€™/g, "'")
     .replace(/\u00a0/g, " ")
     .trim();
 
@@ -568,7 +796,11 @@ function formatFileSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function formatDate(value: Date) {
+function formatDate(value: Date | null | undefined) {
+  if (!value) {
+    return "No disponible";
+  }
+
   return sanitizeText(
     new Intl.DateTimeFormat("es-CO", {
       day: "2-digit",
@@ -579,7 +811,11 @@ function formatDate(value: Date) {
   );
 }
 
-function formatDateTime(value: Date) {
+function formatDateTime(value: Date | null | undefined) {
+  if (!value) {
+    return "No disponible";
+  }
+
   return sanitizeText(
     new Intl.DateTimeFormat("es-CO", {
       day: "2-digit",
