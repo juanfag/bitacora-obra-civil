@@ -6,10 +6,11 @@ import { DailyLogPdfService } from "./daily-log-pdf.service";
 import { DailyLogsService } from "./daily-logs.service";
 import { DailyLogWorkflowService } from "./daily-log-workflow.service";
 import { DailyLogProjectAccessGuard } from "./guards/daily-log-project-access.guard";
+import { PublicDailyLogsController } from "./public-daily-logs.controller";
 
 @Module({
   imports: [AuthModule, ProjectsModule],
-  controllers: [DailyLogsController],
+  controllers: [DailyLogsController, PublicDailyLogsController],
   providers: [
     DailyLogPdfService,
     DailyLogsService,

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -239,6 +240,47 @@ export class DailyLogPdfService {
       ...(warning ? { warning } : {}),
     };
   }
+
+  async verifyPublicDocumentCode(id: string, providedCode: string | undefined) {
+    const normalizedProvidedCode = providedCode?.trim() || null;
+
+    if (!normalizedProvidedCode) {
+      throw new BadRequestException("No se recibió código de verificación.");
+    }
+
+    const dailyLog = await this.prisma.dailyLog.findUnique({
+      where: { id },
+      include: dailyLogPdfInclude,
+    });
+
+    if (!dailyLog) {
+      throw new NotFoundException("Daily log not found");
+    }
+
+    const verification = buildVerificationData(dailyLog);
+    const reason = getVerificationReason(
+      verification.code,
+      normalizedProvidedCode,
+    );
+    const warning =
+      dailyLog.status === "CLOSED"
+        ? undefined
+        : "La bitácora no está cerrada; su contenido aún puede cambiar.";
+
+    return {
+      dailyLogShortId: shortId(dailyLog.id),
+      generatedAt: new Date().toISOString(),
+      isClosed: dailyLog.status === "CLOSED",
+      logDate: formatDateForFileName(dailyLog.logDate),
+      message: getVerificationMessage(reason),
+      projectName: dailyLog.project.name,
+      providedCode: normalizedProvidedCode,
+      reason,
+      status: dailyLog.status,
+      verified: reason === "MATCH",
+      ...(warning ? { warning } : {}),
+    };
+  }
 }
 
 function renderPdf(
@@ -284,9 +326,9 @@ function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
   return {
     code,
     hash,
-    url: `${baseUrl}/daily-logs/${encodeURIComponent(
+    url: `${baseUrl}/public/verify/${encodeURIComponent(
       dailyLog.id,
-    )}/verify?code=${encodeURIComponent(code)}`,
+    )}?code=${encodeURIComponent(code)}`,
   };
 }
 
