@@ -43,13 +43,15 @@ export default function NewDailyLogPage() {
     setIsSubmitting(true);
 
     try {
+      const payload = {
+        projectId,
+        logDate,
+        comments: comments.trim() || undefined,
+      };
+
       const dailyLog = await apiRequest<DailyLog>("/daily-logs", {
         method: "POST",
-        body: JSON.stringify({
-          projectId,
-          logDate,
-          comments: comments.trim() || undefined,
-        }),
+        body: JSON.stringify(payload),
       });
 
       router.replace(`/daily-logs/${dailyLog.id}`);
@@ -62,9 +64,7 @@ export default function NewDailyLogPage() {
         }
 
         if (caughtError.status === 409) {
-          setError(
-            "Ya existe una bitácora para este proyecto en la fecha seleccionada.",
-          );
+          setError(getConflictMessage(caughtError.message));
           return;
         }
 
@@ -153,5 +153,26 @@ export default function NewDailyLogPage() {
 }
 
 function getTodayForInput() {
-  return new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getConflictMessage(message: string) {
+  if (message.includes("already exists")) {
+    return "Ya existe una bitácora para este proyecto en la fecha seleccionada.";
+  }
+
+  if (message.includes("must be CLOSED")) {
+    return "La bitácora del día hábil anterior debe estar cerrada antes de crear una nueva.";
+  }
+
+  if (message.includes("must exist")) {
+    return "Debe existir y estar cerrada la bitácora del día hábil anterior antes de crear una nueva.";
+  }
+
+  return message || "No fue posible crear la bitácora por una regla del flujo.";
 }
