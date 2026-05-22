@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma, RecordStatus } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import PDFDocument from "pdfkit";
+import QRCode from "qrcode";
 import { CurrentUserPayload } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -98,6 +100,13 @@ type RenderContext = {
     subtitle: string;
     title: string;
   };
+  verification: VerificationData;
+};
+
+type VerificationData = {
+  code: string;
+  hash: string;
+  url: string;
 };
 
 const COLORS = {
@@ -117,8 +126,10 @@ const PAGE = {
 };
 
 const MAX_PHOTO_EVIDENCE_PER_EVENT = 6;
-const PHOTO_COLUMNS = 3;
-const PHOTO_FIT: [number, number] = [146, 100];
+const PHOTO_COLUMNS = 2;
+const PHOTO_FIT: [number, number] = [220, 140];
+const PHOTO_LABEL_HEIGHT = 32;
+const PHOTO_PADDING = 7;
 
 @Injectable()
 export class DailyLogPdfService {
@@ -134,6 +145,7 @@ export class DailyLogPdfService {
       throw new NotFoundException("Daily log not found");
     }
 
+    const verification = buildVerificationData(dailyLog);
     const context: RenderContext = {
       generatedAt: new Date(),
       generatedBy: formatPerson(generatedBy),
@@ -146,16 +158,19 @@ export class DailyLogPdfService {
         )}`,
         title: "Bitácora diaria de obra",
       },
+      verification,
     };
     const photoEvidenceByEventId = await buildDailyLogPhotoEvidence(
       dailyLog.dailyLogEvents,
     );
+    const verificationQr = await buildVerificationQr(verification.url);
 
     const buffer = await renderPdf(context, (doc) => {
       addHeader(doc, context);
       addGeneralInfoSection(doc, dailyLog);
       addEventsSection(doc, dailyLog.dailyLogEvents, photoEvidenceByEventId);
       addControlAndSignaturesSection(doc, dailyLog, context);
+      addVerificationSection(doc, dailyLog, context, verificationQr);
     });
 
     return {
@@ -196,6 +211,59 @@ async function buildDailyLogPhotoEvidence(events: EventForPdf[]) {
   }
 
   return evidenceByEventId;
+}
+
+function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
+  const hash = createHash("sha256")
+    .update(JSON.stringify(buildDocumentHashPayload(dailyLog)))
+    .digest("hex");
+  const code = hash.slice(0, 16);
+  const baseUrl = getPublicAppUrl();
+
+  return {
+    code,
+    hash,
+    url: `${baseUrl}/verify/daily-logs/${dailyLog.id}?code=${code}`,
+  };
+}
+
+function buildDocumentHashPayload(dailyLog: DailyLogForPdf) {
+  return {
+    attachments: dailyLog.dailyLogEvents.flatMap((event) =>
+      event.attachments.map((attachment) => ({
+        checksumSha256: attachment.checksumSha256 ?? null,
+        id: attachment.id,
+      })),
+    ),
+    dailyLogId: dailyLog.id,
+    events: dailyLog.dailyLogEvents.map((event) => event.id),
+    logDate: formatDateForFileName(dailyLog.logDate),
+    projectId: dailyLog.projectId,
+    status: dailyLog.status,
+    statusHistory: dailyLog.statusHistory.map((item) => ({
+      changedAt: item.changedAt.toISOString(),
+      id: item.id,
+      toStatus: item.toStatus,
+    })),
+    updatedAt: dailyLog.updatedAt.toISOString(),
+  };
+}
+
+function getPublicAppUrl() {
+  return (
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_PUBLIC_URL ||
+    "http://localhost:3000"
+  ).replace(/\/+$/g, "");
+}
+
+async function buildVerificationQr(url: string) {
+  return QRCode.toDataURL(url, {
+    errorCorrectionLevel: "M",
+    margin: 1,
+    scale: 4,
+    type: "image/png",
+  });
 }
 
 async function buildEventPhotoEvidenceSection(event: EventForPdf) {
@@ -596,6 +664,94 @@ function addFormalSignatureBlocks(
   blocks.forEach((block) => addSignatureCard(doc, block));
 }
 
+function addVerificationSection(
+  doc: PDFKit.PDFDocument,
+  dailyLog: DailyLogForPdf,
+  context: RenderContext,
+  qrDataUri: string,
+) {
+  ensureSpace(doc, 168);
+  addSectionTitle(doc, "Verificación documental");
+
+  const x = PAGE.left;
+  const y = doc.y;
+  const width = contentWidth(doc);
+  const qrSize = 96;
+  doc
+    .roundedRect(x, y, width, 132, 5)
+    .fillAndStroke(COLORS.fill, COLORS.softBorder);
+
+  try {
+    doc.image(qrDataUri, x + 14, y + 16, {
+      fit: [qrSize, qrSize],
+    });
+  } catch {
+    doc
+      .font("Helvetica")
+      .fontSize(8.5)
+      .fillColor(COLORS.muted)
+      .text("QR no disponible", x + 14, y + 56, {
+        align: "center",
+        width: qrSize,
+      });
+  }
+
+  const textX = x + qrSize + 30;
+  const textWidth = width - qrSize - 44;
+  const statusNote =
+    dailyLog.status === "CLOSED"
+      ? "Documento cerrado. Cualquier modificación posterior deberá quedar registrada como nueva trazabilidad."
+      : `Documento en estado ${formatStatus(dailyLog.status)}. Su contenido aún puede cambiar.`;
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor(COLORS.text)
+    .text("Código de verificación", textX, y + 14, {
+      width: textWidth,
+    });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(14)
+    .fillColor(COLORS.primary)
+    .text(context.verification.code, textX, y + 31, {
+      width: textWidth,
+    });
+  doc
+    .font("Helvetica")
+    .fontSize(8.8)
+    .fillColor(COLORS.text)
+    .text(`ID bitácora: ${shortId(dailyLog.id)}`, textX, y + 53, {
+      width: textWidth,
+    })
+    .text(`Generado: ${formatDateTime(context.generatedAt)}`, {
+      width: textWidth,
+    })
+    .text(`URL: ${context.verification.url}`, {
+      lineGap: 1.2,
+      width: textWidth,
+    });
+  doc
+    .font("Helvetica")
+    .fontSize(8.4)
+    .fillColor(COLORS.muted)
+    .text(
+      "Este código permite contrastar la bitácora contra los registros digitales del sistema.",
+      textX,
+      y + 88,
+      {
+        lineGap: 1.2,
+        width: textWidth,
+      },
+    )
+    .text(sanitizeText(statusNote), {
+      lineGap: 1.2,
+      width: textWidth,
+    });
+
+  doc.y = y + 146;
+}
+
 function addSignatureCard(
   doc: PDFKit.PDFDocument,
   block: {
@@ -898,20 +1054,23 @@ function addPhotoEvidenceSection(
     });
   doc.moveDown(0.25);
 
-  const gap = 10;
+  const gap = 12;
   const cellWidth = (width - gap * (PHOTO_COLUMNS - 1)) / PHOTO_COLUMNS;
   const imageHeight = PHOTO_FIT[1];
-  const labelHeight = 28;
-  const cellHeight = imageHeight + labelHeight + 12;
+  const cellHeight = imageHeight + PHOTO_LABEL_HEIGHT + PHOTO_PADDING * 2;
 
   evidence.photos.forEach((photo, index) => {
-    if (index % PHOTO_COLUMNS === 0) {
-      ensureSpace(doc, cellHeight + 10);
+    const column = index % PHOTO_COLUMNS;
+
+    if (column === 0) {
+      ensureSpace(doc, cellHeight + 8);
     }
 
-    const column = index % PHOTO_COLUMNS;
     const rowY = doc.y;
     const cellX = x + column * (cellWidth + gap);
+    const imageX = cellX + PHOTO_PADDING;
+    const imageY = rowY + PHOTO_PADDING;
+    const imageWidth = cellWidth - PHOTO_PADDING * 2;
 
     doc
       .roundedRect(cellX, rowY, cellWidth, cellHeight, 4)
@@ -921,9 +1080,9 @@ function addPhotoEvidenceSection(
 
     if (photo.imageBuffer) {
       try {
-        doc.image(photo.imageBuffer, cellX + 5, rowY + 5, {
+        doc.image(photo.imageBuffer, imageX, imageY, {
           align: "center",
-          fit: PHOTO_FIT,
+          fit: [Math.min(PHOTO_FIT[0], imageWidth), imageHeight],
           valign: "center",
         });
       } catch {
@@ -937,13 +1096,19 @@ function addPhotoEvidenceSection(
       .font("Helvetica")
       .fontSize(7.5)
       .fillColor(COLORS.muted)
-      .text(formatPhotoCaption(photo.attachment), cellX + 6, rowY + imageHeight + 10, {
-        lineGap: 1,
-        width: cellWidth - 12,
-      });
+      .text(
+        formatPhotoCaption(photo.attachment),
+        cellX + PHOTO_PADDING,
+        rowY + imageHeight + PHOTO_PADDING + 4,
+        {
+          height: PHOTO_LABEL_HEIGHT - 4,
+          lineGap: 1,
+          width: cellWidth - PHOTO_PADDING * 2,
+        },
+      );
 
     if (column === PHOTO_COLUMNS - 1 || index === evidence.photos.length - 1) {
-      doc.y = rowY + cellHeight + 8;
+      doc.y = rowY + cellHeight + 6;
     }
   });
 
@@ -975,10 +1140,15 @@ function addUnavailableImageText(
     .font("Helvetica")
     .fontSize(8.5)
     .fillColor(COLORS.muted)
-    .text("Imagen no disponible", x + 8, y + height / 2 - 5, {
+    .text(
+      "Imagen no disponible",
+      x + PHOTO_PADDING,
+      y + PHOTO_PADDING + height / 2 - 5,
+      {
       align: "center",
-      width: width - 16,
-    });
+        width: width - PHOTO_PADDING * 2,
+      },
+    );
 }
 
 function addEmptyState(doc: PDFKit.PDFDocument, value: string) {
@@ -1016,6 +1186,7 @@ function ensureSpace(doc: PDFKit.PDFDocument, height: number) {
 function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
   const range = doc.bufferedPageRange();
   const generatedAt = formatDateTime(context.generatedAt);
+  const originalPage = range.start + range.count - 1;
 
   for (let index = 0; index < range.count; index += 1) {
     doc.switchToPage(range.start + index);
@@ -1063,6 +1234,8 @@ function addFooters(doc: PDFKit.PDFDocument, context: RenderContext) {
         },
       );
   }
+
+  doc.switchToPage(originalPage);
 }
 
 function contentWidth(doc: PDFKit.PDFDocument) {
