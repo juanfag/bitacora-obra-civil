@@ -23,6 +23,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
@@ -84,6 +85,30 @@ export class DailyLogsController {
       `attachment; filename="${pdf.fileName}"`,
     );
     response.send(pdf.buffer);
+  }
+
+  @Get("daily-logs/:id/verification")
+  @ApiOperation({ summary: "Verify daily log document code" })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiQuery({
+    name: "code",
+    required: false,
+    description: "Short verification code printed in the PDF.",
+  })
+  @ApiOkResponse({
+    description: "Daily log document verification result returned.",
+  })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({
+    description: "Authenticated user does not have access to the project.",
+  })
+  @Permissions("daily-logs:read")
+  verifyDocument(
+    @Param("id") id: string,
+    @Query("code") code: string | undefined,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.dailyLogPdfService.verifyDocumentCode(id, code, user);
   }
 
   @Get("daily-logs/:id")

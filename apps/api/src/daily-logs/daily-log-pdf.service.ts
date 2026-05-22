@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { Prisma, RecordStatus } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -7,6 +11,7 @@ import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { CurrentUserPayload } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 
 const dailyLogPdfInclude = {
   approvedBy: {
@@ -133,7 +138,10 @@ const PHOTO_PADDING = 7;
 
 @Injectable()
 export class DailyLogPdfService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
+  ) {}
 
   async generate(id: string, generatedBy?: CurrentUserPayload) {
     const dailyLog = await this.prisma.dailyLog.findUnique({
@@ -176,6 +184,59 @@ export class DailyLogPdfService {
     return {
       buffer,
       fileName: `bitacora-${formatDateForFileName(dailyLog.logDate)}.pdf`,
+    };
+  }
+
+  async verifyDocumentCode(
+    id: string,
+    providedCode: string | undefined,
+    user: CurrentUserPayload,
+  ) {
+    const dailyLog = await this.prisma.dailyLog.findUnique({
+      where: { id },
+      include: dailyLogPdfInclude,
+    });
+
+    if (!dailyLog) {
+      throw new NotFoundException("Daily log not found");
+    }
+
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      user.sub,
+      dailyLog.projectId,
+    );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
+
+    const verification = buildVerificationData(dailyLog);
+    const normalizedProvidedCode = providedCode?.trim() || null;
+    const reason = getVerificationReason(
+      verification.code,
+      normalizedProvidedCode,
+    );
+    const verified = reason === "MATCH";
+    const warning =
+      dailyLog.status === "CLOSED"
+        ? undefined
+        : "La bitácora no está cerrada; su contenido aún puede cambiar.";
+
+    return {
+      dailyLogId: dailyLog.id,
+      dailyLogShortId: shortId(dailyLog.id),
+      generatedAt: new Date().toISOString(),
+      isClosed: dailyLog.status === "CLOSED",
+      logDate: formatDateForFileName(dailyLog.logDate),
+      message: getVerificationMessage(reason),
+      projectId: dailyLog.projectId,
+      projectName: dailyLog.project.name,
+      providedCode: normalizedProvidedCode,
+      reason,
+      status: dailyLog.status,
+      verificationCode: verification.code,
+      verified,
+      ...(warning ? { warning } : {}),
     };
   }
 }
@@ -225,6 +286,32 @@ function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
     hash,
     url: `${baseUrl}/verify/daily-logs/${dailyLog.id}?code=${code}`,
   };
+}
+
+function getVerificationReason(
+  expectedCode: string,
+  providedCode: string | null,
+) {
+  if (!providedCode) {
+    return "MISSING_CODE";
+  }
+
+  if (providedCode !== expectedCode) {
+    return "CODE_MISMATCH";
+  }
+
+  return "MATCH";
+}
+
+function getVerificationMessage(reason: string) {
+  const messages: Record<string, string> = {
+    CODE_MISMATCH:
+      "El código recibido no coincide con el registro digital actual.",
+    MATCH: "Documento verificado contra los registros digitales del sistema.",
+    MISSING_CODE: "No se recibió código de verificación.",
+  };
+
+  return messages[reason] ?? messages.CODE_MISMATCH;
 }
 
 function buildDocumentHashPayload(dailyLog: DailyLogForPdf) {
