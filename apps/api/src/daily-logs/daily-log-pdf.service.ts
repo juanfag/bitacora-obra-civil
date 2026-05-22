@@ -155,8 +155,7 @@ export class DailyLogPdfService {
       addHeader(doc, context);
       addGeneralInfoSection(doc, dailyLog);
       addEventsSection(doc, dailyLog.dailyLogEvents, photoEvidenceByEventId);
-      addControlSection(doc, dailyLog, context);
-      addSignatureSection(doc);
+      addControlAndSignaturesSection(doc, dailyLog, context);
     });
 
     return {
@@ -418,19 +417,257 @@ function addEventBlock(
   doc.moveDown(0.7);
 }
 
-function addControlSection(
+function addControlAndSignaturesSection(
   doc: PDFKit.PDFDocument,
   dailyLog: DailyLogForPdf,
   context: RenderContext,
 ) {
-  addSectionTitle(doc, "Control");
+  const workflow = buildWorkflowTransitionSummary(dailyLog);
+
+  addSectionTitle(doc, "Control y firmas");
   addInfoGrid(doc, [
-    ["Estado actual", formatStatus(dailyLog.status)],
+    ["Estado documental final", formatStatus(dailyLog.status)],
+    ["Elaborado por", formatPerson(dailyLog.createdBy)],
+    ["Fecha de elaboracion", formatDateTime(dailyLog.createdAt)],
+    ["Enviado a revision por", formatWorkflowAction(workflow.submitted)],
+    ["Aprobado por", formatWorkflowAction(workflow.approved)],
+    ["Cerrado por", formatWorkflowAction(workflow.closed)],
+    ["Rechazado", formatWorkflowAction(workflow.rejected)],
+    ["Anulado / cancelado", formatWorkflowAction(workflow.voided)],
     ["Generado por", context.generatedBy],
     ["Fecha/hora de generación", formatDateTime(context.generatedAt)],
   ]);
 
   addStatusHistory(doc, dailyLog.statusHistory);
+  addDigitalRecordLegend(doc);
+  addFormalSignatureBlocks(doc, dailyLog, workflow);
+}
+
+type WorkflowActionSummary = {
+  comments?: string | null;
+  date?: Date | null;
+  user?: { email: string | null; fullName: string | null } | null;
+};
+
+type WorkflowTransitionSummary = {
+  approved: WorkflowActionSummary;
+  closed: WorkflowActionSummary;
+  rejected: WorkflowActionSummary;
+  submitted: WorkflowActionSummary;
+  voided: WorkflowActionSummary;
+};
+
+function buildWorkflowTransitionSummary(
+  dailyLog: DailyLogForPdf,
+): WorkflowTransitionSummary {
+  const submitted = findLastTransition(dailyLog.statusHistory, "IN_REVIEW");
+  const approved = findLastTransition(dailyLog.statusHistory, "APPROVED");
+  const closed = findLastTransition(dailyLog.statusHistory, "CLOSED");
+  const rejected = findLastTransition(dailyLog.statusHistory, "REJECTED");
+  const voided =
+    findLastTransition(dailyLog.statusHistory, "VOIDED") ??
+    findLastTransition(dailyLog.statusHistory, "CANCELLED");
+
+  return {
+    approved: {
+      comments: approved?.comments ?? null,
+      date: dailyLog.approvedAt ?? approved?.changedAt ?? null,
+      user: dailyLog.approvedBy ?? approved?.changedBy ?? null,
+    },
+    closed: {
+      comments: closed?.comments ?? null,
+      date: dailyLog.closedAt ?? closed?.changedAt ?? null,
+      user: closed?.changedBy ?? null,
+    },
+    rejected: {
+      comments: rejected?.comments ?? null,
+      date: dailyLog.reviewedAt ?? rejected?.changedAt ?? null,
+      user: dailyLog.reviewedBy ?? rejected?.changedBy ?? null,
+    },
+    submitted: {
+      comments: submitted?.comments ?? null,
+      date: dailyLog.submittedAt ?? submitted?.changedAt ?? null,
+      user: submitted?.changedBy ?? null,
+    },
+    voided: {
+      comments: voided?.comments ?? null,
+      date: voided?.changedAt ?? null,
+      user: voided?.changedBy ?? null,
+    },
+  };
+}
+
+function findLastTransition(
+  statusHistory: StatusHistoryForPdf[],
+  status: string,
+) {
+  return [...statusHistory]
+    .reverse()
+    .find((item) => item.toStatus === status);
+}
+
+function formatWorkflowAction(action: WorkflowActionSummary) {
+  if (!action.date && !action.user && !action.comments) {
+    return "Pendiente";
+  }
+
+  const details = [
+    action.user ? formatPerson(action.user) : "Pendiente",
+    formatDateTime(action.date),
+    action.comments ? `Motivo: ${sanitizeText(action.comments)}` : null,
+  ].filter((value) => value && value !== "No disponible");
+
+  return details.join(" | ");
+}
+
+function addDigitalRecordLegend(doc: PDFKit.PDFDocument) {
+  ensureSpace(doc, 92);
+  doc.moveDown(0.7);
+  doc
+    .roundedRect(PAGE.left, doc.y, contentWidth(doc), 78, 5)
+    .fillAndStroke(COLORS.fill, COLORS.softBorder);
+
+  const textX = PAGE.left + 14;
+  const textY = doc.y + 12;
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9.5)
+    .fillColor(COLORS.text)
+    .text("Validez del registro digital", textX, textY, {
+      width: contentWidth(doc) - 28,
+    });
+  doc
+    .font("Helvetica")
+    .fontSize(8.8)
+    .fillColor(COLORS.text)
+    .text(
+      "Este documento corresponde al registro digital de la bitacora diaria de obra. La informacion contenida fue generada a partir de los eventos, adjuntos, usuarios y transiciones registrados en el sistema.",
+      textX,
+      textY + 16,
+      {
+        lineGap: 1.4,
+        width: contentWidth(doc) - 28,
+      },
+    );
+  doc
+    .font("Helvetica")
+    .fontSize(8.8)
+    .fillColor(COLORS.muted)
+    .text(
+      "Las evidencias documentales adicionales se conservan como adjuntos digitales asociados a la bitacora.",
+      textX,
+      textY + 48,
+      {
+        lineGap: 1.4,
+        width: contentWidth(doc) - 28,
+      },
+    );
+  doc.y += 88;
+}
+
+function addFormalSignatureBlocks(
+  doc: PDFKit.PDFDocument,
+  dailyLog: DailyLogForPdf,
+  workflow: WorkflowTransitionSummary,
+) {
+  addSectionTitle(doc, "Bloque formal de firmas");
+
+  const blocks = [
+    {
+      date: dailyLog.createdAt,
+      person: dailyLog.createdBy,
+      role: "Responsable / Residente",
+      title: "Responsable / Residente",
+    },
+    {
+      date: workflow.approved.date,
+      person: workflow.approved.user,
+      role: "Director / Aprobador",
+      title: "Director / Aprobador",
+    },
+    {
+      date: null,
+      person: null,
+      role: "Interventor / Inspector",
+      title: "Interventor / Inspector",
+    },
+  ];
+
+  blocks.forEach((block) => addSignatureCard(doc, block));
+}
+
+function addSignatureCard(
+  doc: PDFKit.PDFDocument,
+  block: {
+    date: Date | null | undefined;
+    person: { email: string | null; fullName: string | null } | null | undefined;
+    role: string;
+    title: string;
+  },
+) {
+  ensureSpace(doc, 112);
+
+  const x = PAGE.left;
+  const y = doc.y;
+  const width = contentWidth(doc);
+  doc
+    .roundedRect(x, y, width, 96, 5)
+    .strokeColor(COLORS.softBorder)
+    .lineWidth(0.7)
+    .stroke();
+
+  const leftX = x + 14;
+  const rightX = x + width / 2 + 8;
+  const innerWidth = width / 2 - 24;
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor(COLORS.primary)
+    .text(block.title, leftX, y + 12, {
+      width: width - 28,
+    });
+
+  addSignatureField(doc, "Nombre", formatSignaturePerson(block.person), leftX, y + 34, innerWidth);
+  addSignatureField(doc, "Cargo/Rol", block.role, rightX, y + 34, innerWidth);
+  addSignatureField(doc, "Fecha", formatSignatureDate(block.date), leftX, y + 58, innerWidth);
+  addSignatureField(doc, "Firma", "________________________________", rightX, y + 58, innerWidth);
+
+  doc.y = y + 106;
+}
+
+function addSignatureField(
+  doc: PDFKit.PDFDocument,
+  label: string,
+  value: string,
+  x: number,
+  y: number,
+  width: number,
+) {
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8.5)
+    .fillColor(COLORS.muted)
+    .text(`${label}:`, x, y, {
+      width,
+    });
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor(COLORS.text)
+    .text(value || "Pendiente", x, y + 11, {
+      lineGap: 1.2,
+      width,
+    });
+}
+
+function formatSignaturePerson(
+  value: { email: string | null; fullName: string | null } | null | undefined,
+) {
+  return value ? formatPerson(value) : "Pendiente";
+}
+
+function formatSignatureDate(value: Date | null | undefined) {
+  return value ? formatDateTime(value) : "Pendiente";
 }
 
 function addStatusHistory(
@@ -482,12 +719,6 @@ function addStatusHistory(
         });
     }
   });
-}
-
-function addSignatureSection(doc: PDFKit.PDFDocument) {
-  addSectionTitle(doc, "Firmas pendientes");
-  addSignatureLine(doc, "Responsable");
-  addSignatureLine(doc, "Aprobador");
 }
 
 function addSectionTitle(doc: PDFKit.PDFDocument, title: string) {
@@ -763,18 +994,6 @@ function addEmptyState(doc: PDFKit.PDFDocument, value: string) {
       width: contentWidth(doc) - 28,
     });
   doc.moveDown(2.2);
-}
-
-function addSignatureLine(doc: PDFKit.PDFDocument, label: string) {
-  ensureSpace(doc, 58);
-  doc.moveDown(0.9);
-  doc
-    .font("Helvetica")
-    .fontSize(10)
-    .fillColor(COLORS.text)
-    .text(`${label}: ______________________________________________`, PAGE.left, doc.y, {
-      width: contentWidth(doc),
-    });
 }
 
 function addThinRule(doc: PDFKit.PDFDocument) {
