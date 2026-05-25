@@ -6,7 +6,13 @@ import {
 } from "@nestjs/common";
 import { Prisma, RecordStatus } from "@prisma/client";
 import * as bcrypt from "bcrypt";
+import { createHash } from "node:crypto";
+import { basename, extname } from "node:path";
+import { readFile, unlink } from "node:fs/promises";
+import { AuditService } from "../audit/audit.service";
+import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
+import { UploadedFile } from "../uploads/upload-file.types";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 
@@ -29,9 +35,26 @@ const userSelect = {
   updatedAt: true,
 } satisfies Prisma.UserSelect;
 
+const userSignatureSelect = {
+  id: true,
+  signatureFileName: true,
+  signatureMimeType: true,
+  signatureFileSize: true,
+  signatureFileHash: true,
+  signatureFileUrl: true,
+  signatureUploadedAt: true,
+} satisfies Prisma.UserSelect;
+
+type UserSignatureRecord = Prisma.UserGetPayload<{
+  select: typeof userSignatureSelect;
+}>;
+
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async findAll(filters: UserFilters) {
     this.validateStatus(filters.status);
@@ -130,6 +153,108 @@ export class UsersService {
     });
   }
 
+  async getMySignature(userId: string) {
+    const user = await this.findUserSignature(userId);
+
+    return this.toSignatureResponse(user);
+  }
+
+  async uploadMySignature(
+    userId: string,
+    file: UploadedFile,
+    audit: AuditRequestContext,
+  ) {
+    let user: UserSignatureRecord;
+    let oldSignaturePath: string | null = null;
+
+    try {
+      this.ensureSignatureFile(file);
+
+      const currentUser = await this.findUserSignature(userId);
+      oldSignaturePath = currentUser.signatureFileUrl;
+      const checksum = await this.calculateSha256(file.path);
+      const fileName = sanitizeSignatureFileName(file.originalname);
+      user = await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          signatureFileName: fileName,
+          signatureMimeType: file.mimetype,
+          signatureFileSize: BigInt(file.size),
+          signatureFileHash: checksum,
+          signatureFileUrl: file.path,
+          signatureUploadedAt: new Date(),
+        },
+        select: userSignatureSelect,
+      });
+    } catch (error) {
+      await safeUnlink(file.path);
+      throw error;
+    }
+
+    if (oldSignaturePath && oldSignaturePath !== file.path) {
+      await safeUnlink(oldSignaturePath);
+    }
+
+    await this.auditService.record({
+      ...audit,
+      action: oldSignaturePath
+        ? "USER_SIGNATURE_REPLACED"
+        : "USER_SIGNATURE_UPLOADED",
+      entity: "User",
+      entityId: userId,
+      newValue: {
+        hasSignature: true,
+        mimeType: user.signatureMimeType,
+        fileSize: user.signatureFileSize ? Number(user.signatureFileSize) : null,
+      },
+    });
+
+    return this.toSignatureResponse(user);
+  }
+
+  async deleteMySignature(userId: string, audit: AuditRequestContext) {
+    const currentUser = await this.findUserSignature(userId);
+    const signaturePath = currentUser.signatureFileUrl;
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        signatureFileName: null,
+        signatureMimeType: null,
+        signatureFileSize: null,
+        signatureFileHash: null,
+        signatureFileUrl: null,
+        signatureUploadedAt: null,
+      },
+      select: userSignatureSelect,
+    });
+
+    if (signaturePath) {
+      await safeUnlink(signaturePath);
+    }
+
+    await this.auditService.record({
+      ...audit,
+      action: "USER_SIGNATURE_DELETED",
+      entity: "User",
+      entityId: userId,
+      oldValue: {
+        hadSignature: Boolean(signaturePath),
+      },
+      newValue: {
+        hasSignature: false,
+      },
+    });
+
+    return this.toSignatureResponse(user);
+  }
+
+  async discardUploadedSignatureFile(filePath: string | undefined) {
+    if (filePath) {
+      await safeUnlink(filePath);
+    }
+  }
+
   private async ensureExists(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
@@ -138,6 +263,67 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException("Usuario no encontrado");
+    }
+  }
+
+  private async findUserSignature(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: userSignatureSelect,
+    });
+
+    if (!user) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    return user;
+  }
+
+  private ensureSignatureFile(file: UploadedFile | undefined) {
+    if (!file) {
+      throw new BadRequestException("Signature file is required.");
+    }
+
+    if (file.mimetype !== "image/png" && file.mimetype !== "image/jpeg") {
+      throw new BadRequestException("Signature must be a PNG or JPG image.");
+    }
+
+    if (file.size > 1024 * 1024) {
+      throw new BadRequestException("Signature image exceeds 1 MB.");
+    }
+  }
+
+  private async calculateSha256(filePath: string) {
+    const buffer = await readFile(filePath);
+
+    return createHash("sha256").update(buffer).digest("hex");
+  }
+
+  private async toSignatureResponse(user: UserSignatureRecord) {
+    const hasSignature = Boolean(user.signatureFileUrl);
+
+    return {
+      hasSignature,
+      documentId: null,
+      fileName: user.signatureFileName,
+      mimeType: user.signatureMimeType,
+      fileSize: user.signatureFileSize ? Number(user.signatureFileSize) : null,
+      uploadedAt: user.signatureUploadedAt,
+      previewDataUrl: hasSignature ? await this.getSignatureDataUrl(user) : null,
+    };
+  }
+
+  private async getSignatureDataUrl(user: UserSignatureRecord) {
+    if (!user.signatureFileUrl || !user.signatureMimeType) {
+      return null;
+    }
+
+    try {
+      const buffer = await readFile(user.signatureFileUrl);
+
+      return `data:${user.signatureMimeType};base64,${buffer.toString("base64")}`;
+    } catch {
+      return null;
     }
   }
 
@@ -184,5 +370,29 @@ export class UsersService {
     }
 
     return "Ya existe un usuario con los mismos datos unicos.";
+  }
+}
+
+function sanitizeSignatureFileName(fileName: string) {
+  const baseName = basename(fileName || "firma-usuario")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w.\- ]+/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  const extension = extname(baseName).toLowerCase();
+  const nameWithoutExtension = extension
+    ? baseName.slice(0, -extension.length)
+    : baseName;
+  const safeName = (nameWithoutExtension || "firma-usuario").slice(0, 120);
+
+  return `${safeName}${extension}`.slice(0, 150);
+}
+
+async function safeUnlink(filePath: string) {
+  try {
+    await unlink(filePath);
+  } catch {
+    return;
   }
 }

@@ -6,7 +6,10 @@ export type AuditActionType =
   | "APPROVE"
   | "REJECT"
   | "CLOSE"
-  | "VOID";
+  | "VOID"
+  | "USER_SIGNATURE_UPLOADED"
+  | "USER_SIGNATURE_REPLACED"
+  | "USER_SIGNATURE_DELETED";
 
 export type AuditRequestContext = {
   actorId: string;

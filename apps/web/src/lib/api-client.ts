@@ -86,6 +86,36 @@ export function uploadDailyLogEventAttachment(
   });
 }
 
+export type UserSignature = {
+  hasSignature: boolean;
+  documentId: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
+  uploadedAt: string | null;
+  previewDataUrl: string | null;
+};
+
+export function getMySignature() {
+  return apiRequest<UserSignature>("/users/me/signature");
+}
+
+export function uploadMySignature(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+
+  return apiRequest<UserSignature>("/users/me/signature", {
+    method: "POST",
+    body,
+  });
+}
+
+export function deleteMySignature() {
+  return apiRequest<UserSignature>("/users/me/signature", {
+    method: "DELETE",
+  });
+}
+
 export async function downloadDailyLogPdf(dailyLogId: string) {
   const token =
     typeof window !== "undefined"

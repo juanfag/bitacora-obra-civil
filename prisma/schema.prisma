@@ -113,6 +113,9 @@ enum AuditAction {
   GENERATE_PDF
   CLOSE
   VOID
+  USER_SIGNATURE_UPLOADED
+  USER_SIGNATURE_REPLACED
+  USER_SIGNATURE_DELETED
 
   @@map("audit_action")
 }
@@ -146,6 +149,12 @@ model User {
   documentType   String?      @map("document_type") @db.VarChar(30)
   documentNumber String?      @map("document_number") @db.VarChar(50)
   passwordHash   String?      @map("password_hash")
+  signatureFileName String?   @map("signature_file_name") @db.VarChar(250)
+  signatureMimeType String?   @map("signature_mime_type") @db.VarChar(120)
+  signatureFileSize BigInt?   @map("signature_file_size")
+  signatureFileHash String?   @map("signature_file_hash") @db.Char(64)
+  signatureFileUrl  String?   @map("signature_file_url")
+  signatureUploadedAt DateTime? @map("signature_uploaded_at") @db.Timestamp(6)
   status         RecordStatus @default(ACTIVE)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
