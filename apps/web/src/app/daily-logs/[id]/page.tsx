@@ -15,10 +15,16 @@ import {
 } from "@/components/workflow/WorkflowActions";
 import {
   ApiClientError,
+  DailyLogSignature,
+  DailyLogSignatureType,
+  UserSignature,
+  applyDailyLogSignature,
   apiRequest,
   downloadDailyLogPdf,
   getDailyLogEventAttachments,
+  getDailyLogSignatures,
   getEventTypes,
+  getMySignature,
   uploadDailyLogEventAttachment,
 } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
@@ -53,8 +59,15 @@ export default function DailyLogDetailPage() {
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-  const [preliminarySignatures, setPreliminarySignatures] =
-    useState<Record<string, PreliminarySignature | null>>({});
+  const [dailyLogSignatures, setDailyLogSignatures] = useState<
+    DailyLogSignature[]
+  >([]);
+  const [userSignature, setUserSignature] = useState<UserSignature | null>(null);
+  const [signaturesError, setSignaturesError] = useState<string | null>(null);
+  const [isLoadingSignatures, setIsLoadingSignatures] = useState(false);
+  const [signingType, setSigningType] = useState<DailyLogSignatureType | null>(
+    null,
+  );
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -66,7 +79,9 @@ export default function DailyLogDetailPage() {
     setError(null);
     setEventTypesError(null);
     setDocumentEvidenceError(null);
+    setSignaturesError(null);
     setDocumentEvidence(null);
+    setDailyLogSignatures([]);
     setNotFound(false);
 
     try {
@@ -85,6 +100,28 @@ export default function DailyLogDetailPage() {
       setDailyLog(response);
       setDailyLogEvents(eventsWithAttachments);
       setIsLoadingDocumentEvidence(true);
+      setIsLoadingSignatures(true);
+
+      try {
+        const [signaturesResponse, userSignatureResponse] = await Promise.all([
+          getDailyLogSignatures(params.id),
+          getMySignature(),
+        ]);
+        setDailyLogSignatures(signaturesResponse);
+        setUserSignature(userSignatureResponse);
+      } catch (caughtError) {
+        setDailyLogSignatures([]);
+        setUserSignature(null);
+
+        if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        setSignaturesError("No fue posible cargar las firmas digitales.");
+      } finally {
+        setIsLoadingSignatures(false);
+      }
 
       try {
         const evidenceResponse = await apiRequest<DocumentEvidence>(
@@ -306,6 +343,38 @@ export default function DailyLogDetailPage() {
     }
   }
 
+  async function signDailyLog(signatureType: DailyLogSignatureType) {
+    setError(null);
+    setSuccessMessage(null);
+    setSignaturesError(null);
+    setSigningType(signatureType);
+
+    try {
+      const signature = await applyDailyLogSignature(params.id, signatureType);
+      setDailyLogSignatures((current) => [...current, signature]);
+      setSuccessMessage("Firma aplicada correctamente.");
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError) {
+        if (caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        if (caughtError.status === 409) {
+          setSignaturesError(caughtError.message);
+          return;
+        }
+
+        setSignaturesError(caughtError.message || "No fue posible aplicar la firma.");
+        return;
+      }
+
+      setSignaturesError("No fue posible aplicar la firma.");
+    } finally {
+      setSigningType(null);
+    }
+  }
+
   return (
     <AuthGuard>
       <section>
@@ -438,19 +507,12 @@ export default function DailyLogDetailPage() {
             <InfoCard title="Firmas digitales">
               <DigitalSignaturesSection
                 dailyLogStatus={dailyLog.status}
-                onClearSignature={(signerId) =>
-                  setPreliminarySignatures((current) => ({
-                    ...current,
-                    [signerId]: null,
-                  }))
-                }
-                onUseSignature={(signerId, signature) =>
-                  setPreliminarySignatures((current) => ({
-                    ...current,
-                    [signerId]: signature,
-                  }))
-                }
-                signatures={preliminarySignatures}
+                error={signaturesError}
+                isLoading={isLoadingSignatures}
+                onSign={signDailyLog}
+                signatures={dailyLogSignatures}
+                signingType={signingType}
+                userSignature={userSignature}
               />
             </InfoCard>
 
@@ -521,6 +583,158 @@ type DocumentEvidence = {
   message: string;
 };
 
+type MasterSignatureRole = {
+  id: DailyLogSignatureType;
+  role: string;
+  title: string;
+};
+
+const MASTER_SIGNATURE_ROLES: MasterSignatureRole[] = [
+  {
+    id: "RESPONSIBLE",
+    role: "Responsable / Residente",
+    title: "Responsable / Residente",
+  },
+  {
+    id: "APPROVER",
+    role: "Director / Aprobador",
+    title: "Director / Aprobador",
+  },
+  {
+    id: "INSPECTOR",
+    role: "Interventor / Inspector",
+    title: "Interventor / Inspector",
+  },
+];
+
+function DigitalSignaturesSection({
+  dailyLogStatus,
+  error,
+  isLoading,
+  onSign,
+  signatures,
+  signingType,
+  userSignature,
+}: {
+  dailyLogStatus: string;
+  error: string | null;
+  isLoading: boolean;
+  onSign: (signatureType: DailyLogSignatureType) => void;
+  signatures: DailyLogSignature[];
+  signingType: DailyLogSignatureType | null;
+  userSignature: UserSignature | null;
+}) {
+  const canSign =
+    dailyLogStatus === "APPROVED" || dailyLogStatus === "CLOSED";
+
+  return (
+    <div className="stack">
+      <p className="muted">
+        Las firmas se aplican usando tu firma maestra registrada y quedan congeladas como evidencia historica de esta bitacora.
+      </p>
+      {!canSign ? (
+        <p className="muted">
+          La bitacora debe estar aprobada o cerrada para aplicar firmas digitales.
+        </p>
+      ) : null}
+      {!userSignature?.hasSignature ? (
+        <p className="muted">
+          Debes registrar tu firma en <Link href="/profile">Mi perfil</Link> antes de firmar.
+        </p>
+      ) : null}
+      {isLoading ? <p className="muted">Cargando firmas...</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {MASTER_SIGNATURE_ROLES.map((signer) => (
+        <SignatureSnapshotCard
+          key={signer.id}
+          canSign={canSign && Boolean(userSignature?.hasSignature)}
+          isSigning={signingType === signer.id}
+          onSign={() => onSign(signer.id)}
+          signature={signatures.find(
+            (signature) => signature.signatureType === signer.id,
+          )}
+          signer={signer}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SignatureSnapshotCard({
+  canSign,
+  isSigning,
+  onSign,
+  signature,
+  signer,
+}: {
+  canSign: boolean;
+  isSigning: boolean;
+  onSign: () => void;
+  signature: DailyLogSignature | undefined;
+  signer: MasterSignatureRole;
+}) {
+  return (
+    <div className="panel">
+      <div className="status-row">
+        <div>
+          <h3>{signer.title}</h3>
+          <p className="muted">
+            <strong>Nombre:</strong> {signature?.signerName ?? "Pendiente"}
+          </p>
+          <p className="muted">
+            <strong>Rol:</strong> {signature?.signerRole ?? signer.role}
+          </p>
+          <p className="muted">
+            <strong>Fecha/hora:</strong>{" "}
+            {signature ? formatDateTime(signature.signedAt) : "No disponible"}
+          </p>
+        </div>
+        <span className="badge">{signature ? "Firmado" : "Pendiente"}</span>
+      </div>
+
+      {signature ? (
+        <div className="stack">
+          <p className="muted">
+            Firma congelada al momento de firmar. Reemplazar la firma maestra no cambiara esta evidencia.
+          </p>
+          {signature.previewDataUrl ? (
+            <img
+              alt={`Firma aplicada ${signer.role}`}
+              src={signature.previewDataUrl}
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: 6,
+                maxHeight: 120,
+                maxWidth: "100%",
+                objectFit: "contain",
+                padding: 8,
+              }}
+            />
+          ) : (
+            <p className="muted">Previsualizacion no disponible.</p>
+          )}
+          <p className="muted">
+            {signature.fileName} · {formatFileSize(signature.fileSize)}
+          </p>
+        </div>
+      ) : (
+        <div className="toolbar">
+          <button
+            className="button"
+            disabled={!canSign || isSigning}
+            onClick={onSign}
+            type="button"
+          >
+            {isSigning ? "Firmando..." : "Firmar con mi firma registrada"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type PreliminarySignature = {
   dataUrl: string;
   signedAt: string;
@@ -550,7 +764,7 @@ const SIGNATURE_ROLES: SignatureRole[] = [
   },
 ];
 
-function DigitalSignaturesSection({
+function PreliminaryDigitalSignaturesSection({
   dailyLogStatus,
   onClearSignature,
   onUseSignature,

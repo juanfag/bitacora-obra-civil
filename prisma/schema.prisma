@@ -92,6 +92,14 @@ enum DailyLogDocumentRole {
   @@map("daily_log_document_role")
 }
 
+enum DailyLogSignatureType {
+  RESPONSIBLE
+  APPROVER
+  INSPECTOR
+
+  @@map("daily_log_signature_type")
+}
+
 enum PdfVersionStatus {
   GENERATED
   SIGNED
@@ -116,6 +124,7 @@ enum AuditAction {
   USER_SIGNATURE_UPLOADED
   USER_SIGNATURE_REPLACED
   USER_SIGNATURE_DELETED
+  DAILY_LOG_SIGNATURE_APPLIED
 
   @@map("audit_action")
 }
@@ -186,6 +195,7 @@ model User {
   createdAttachments     Attachment[]            @relation("AttachmentCreatedBy")
   updatedAttachments     Attachment[]            @relation("AttachmentUpdatedBy")
   deletedAttachments     Attachment[]            @relation("AttachmentDeletedBy")
+  dailyLogSignatures     DailyLogSignature[]     @relation("DailyLogSignatureSigner")
   generatedPdfVersions   DailyLogPdfVersion[]    @relation("DailyLogPdfVersionGeneratedBy")
   performedAuditLogs     AuditLog[]              @relation("AuditLogPerformedBy")
 
@@ -343,6 +353,7 @@ model DailyLog {
   statusHistory  DailyLogStatusHistory[]
   documents      DailyLogDocument[]
   pdfVersions    DailyLogPdfVersion[]
+  signatures     DailyLogSignature[]
 
   @@unique([projectId, logDate], map: "uq_daily_logs_project_date")
   @@index([projectId, logDate], map: "idx_daily_logs_project_date")
@@ -516,6 +527,33 @@ model DailyLogApproval {
   approver User     @relation("DailyLogApprovalApprover", fields: [approverId], references: [id])
 
   @@map("daily_log_approvals")
+}
+
+model DailyLogSignature {
+  id                        String                @id @default(uuid()) @db.Uuid
+  dailyLogId                String                @map("daily_log_id") @db.Uuid
+  signerUserId              String                @map("signer_user_id") @db.Uuid
+  signerName                String                @map("signer_name") @db.VarChar(200)
+  signerEmail               String                @map("signer_email") @db.VarChar(150)
+  signerRole                String                @map("signer_role") @db.VarChar(120)
+  signatureType             DailyLogSignatureType @map("signature_type")
+  signatureSnapshotPath     String                @map("signature_snapshot_path")
+  signatureSnapshotMimeType String                @map("signature_snapshot_mime_type") @db.VarChar(120)
+  signatureSnapshotFileName String                @map("signature_snapshot_file_name") @db.VarChar(250)
+  signatureSnapshotFileSize BigInt                @map("signature_snapshot_file_size")
+  signedAt                  DateTime              @default(now()) @map("signed_at") @db.Timestamp(6)
+  ipAddress                 String?               @map("ip_address") @db.VarChar(80)
+  userAgent                 String?               @map("user_agent")
+  createdAt                 DateTime              @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt                 DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id])
+  signerUser User     @relation("DailyLogSignatureSigner", fields: [signerUserId], references: [id])
+
+  @@unique([dailyLogId, signatureType], map: "uq_daily_log_signatures_type")
+  @@index([dailyLogId], map: "idx_daily_log_signatures_log")
+  @@index([signerUserId], map: "idx_daily_log_signatures_signer")
+  @@map("daily_log_signatures")
 }
 
 model Document {

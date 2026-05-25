@@ -9,7 +9,8 @@ export type AuditActionType =
   | "VOID"
   | "USER_SIGNATURE_UPLOADED"
   | "USER_SIGNATURE_REPLACED"
-  | "USER_SIGNATURE_DELETED";
+  | "USER_SIGNATURE_DELETED"
+  | "DAILY_LOG_SIGNATURE_APPLIED";
 
 export type AuditRequestContext = {
   actorId: string;

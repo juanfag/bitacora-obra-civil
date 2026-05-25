@@ -96,6 +96,23 @@ export type UserSignature = {
   previewDataUrl: string | null;
 };
 
+export type DailyLogSignatureType = "RESPONSIBLE" | "APPROVER" | "INSPECTOR";
+
+export type DailyLogSignature = {
+  id: string;
+  dailyLogId: string;
+  signerUserId: string;
+  signerName: string;
+  signerEmail: string;
+  signerRole: string;
+  signatureType: DailyLogSignatureType;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  signedAt: string;
+  previewDataUrl: string | null;
+};
+
 export function getMySignature() {
   return apiRequest<UserSignature>("/users/me/signature");
 }
@@ -114,6 +131,25 @@ export function deleteMySignature() {
   return apiRequest<UserSignature>("/users/me/signature", {
     method: "DELETE",
   });
+}
+
+export function getDailyLogSignatures(dailyLogId: string) {
+  return apiRequest<DailyLogSignature[]>(
+    `/daily-logs/${encodeURIComponent(dailyLogId)}/signatures`,
+  );
+}
+
+export function applyDailyLogSignature(
+  dailyLogId: string,
+  signatureType: DailyLogSignatureType,
+) {
+  return apiRequest<DailyLogSignature>(
+    `/daily-logs/${encodeURIComponent(dailyLogId)}/signatures`,
+    {
+      method: "POST",
+      body: JSON.stringify({ signatureType }),
+    },
+  );
 }
 
 export async function downloadDailyLogPdf(dailyLogId: string) {

@@ -37,11 +37,13 @@ import { Permissions } from "../auth/decorators/permissions.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { CreateDailyLogDto } from "./dto/create-daily-log.dto";
+import { ApplyDailyLogSignatureDto } from "./dto/apply-daily-log-signature.dto";
 import { FindDailyLogsQueryDto } from "./dto/find-daily-logs-query.dto";
 import { RejectDailyLogDto } from "./dto/reject-daily-log.dto";
 import { UpdateDailyLogDto } from "./dto/update-daily-log.dto";
 import { DailyLogsService } from "./daily-logs.service";
 import { DailyLogPdfService } from "./daily-log-pdf.service";
+import { DailyLogSignaturesService } from "./daily-log-signatures.service";
 import { DailyLogProjectAccessGuard } from "./guards/daily-log-project-access.guard";
 import { Response } from "express";
 
@@ -55,6 +57,7 @@ export class DailyLogsController {
   constructor(
     private readonly dailyLogsService: DailyLogsService,
     private readonly dailyLogPdfService: DailyLogPdfService,
+    private readonly dailyLogSignaturesService: DailyLogSignaturesService,
   ) {}
 
   @Get("daily-logs")
@@ -112,6 +115,54 @@ export class DailyLogsController {
       ...audit,
       actorId: user.sub,
     });
+  }
+
+  @Get("daily-logs/:id/signatures")
+  @ApiOperation({ summary: "List applied daily log signatures" })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Applied signature snapshots returned." })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @ApiForbiddenResponse({
+    description: "Authenticated user does not have access to the project.",
+  })
+  @Permissions("daily-logs:read")
+  getSignatures(
+    @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.dailyLogSignaturesService.findByDailyLog(id, user);
+  }
+
+  @Post("daily-logs/:id/signatures")
+  @ApiOperation({ summary: "Apply current user's master signature to a daily log" })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiBody({ type: ApplyDailyLogSignatureDto })
+  @ApiCreatedResponse({ description: "Signature snapshot applied." })
+  @ApiBadRequestResponse({ description: "Invalid signature type or master signature." })
+  @ApiNotFoundResponse({ description: "Daily log or user not found." })
+  @ApiForbiddenResponse({
+    description: "Authenticated user does not have access to the project.",
+  })
+  @ApiConflictResponse({
+    description:
+      "Daily log status does not allow signing, master signature is missing, or this signature type already exists.",
+  })
+  @Permissions("daily-logs:update")
+  applySignature(
+    @Param("id") id: string,
+    @Body() body: ApplyDailyLogSignatureDto,
+    @CurrentUser() user: CurrentUserPayload,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.dailyLogSignaturesService.applySignature(
+      id,
+      body.signatureType,
+      user,
+      {
+        ...audit,
+        actorId: user.sub,
+      },
+    );
   }
 
   @Get("daily-logs/:id")
