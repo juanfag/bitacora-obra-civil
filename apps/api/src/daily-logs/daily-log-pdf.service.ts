@@ -4,12 +4,22 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, RecordStatus } from "@prisma/client";
+import {
+  DailyLogDocumentRole,
+  DailyLogStatus,
+  DocumentStorageProvider,
+  PdfVersionStatus,
+  Prisma,
+  RecordStatus,
+} from "@prisma/client";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join } from "node:path";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
+import { AuditService } from "../audit/audit.service";
+import { AuditRequestContext } from "../audit/audit.types";
 import { CurrentUserPayload } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProjectAccessPolicy } from "../projects/project-access.policy";
@@ -142,9 +152,14 @@ export class DailyLogPdfService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccessPolicy: ProjectAccessPolicy,
+    private readonly auditService: AuditService,
   ) {}
 
-  async generate(id: string, generatedBy?: CurrentUserPayload) {
+  async generate(
+    id: string,
+    generatedBy?: CurrentUserPayload,
+    audit?: AuditRequestContext,
+  ) {
     const dailyLog = await this.prisma.dailyLog.findUnique({
       where: { id },
       include: dailyLogPdfInclude,
@@ -154,7 +169,15 @@ export class DailyLogPdfService {
       throw new NotFoundException("Daily log not found");
     }
 
-    const verification = buildVerificationData(dailyLog);
+    if (dailyLog.status === DailyLogStatus.CLOSED) {
+      const snapshot = await this.findFinalSnapshot(dailyLog.id);
+
+      if (snapshot) {
+        return this.readSnapshot(snapshot);
+      }
+    }
+
+    const verification = await this.resolveVerificationData(dailyLog);
     const context: RenderContext = {
       generatedAt: new Date(),
       generatedBy: formatPerson(generatedBy),
@@ -182,10 +205,22 @@ export class DailyLogPdfService {
       addVerificationSection(doc, dailyLog, context, verificationQr);
     });
 
-    return {
+    const pdf = {
       buffer,
       fileName: `bitacora-${formatDateForFileName(dailyLog.logDate)}.pdf`,
     };
+
+    if (dailyLog.status === DailyLogStatus.CLOSED && generatedBy) {
+      await this.persistFinalSnapshot(
+        dailyLog,
+        pdf,
+        verification,
+        generatedBy,
+        audit,
+      );
+    }
+
+    return pdf;
   }
 
   async verifyDocumentCode(
@@ -211,7 +246,7 @@ export class DailyLogPdfService {
       throw new ForbiddenException("User does not have access to this project.");
     }
 
-    const verification = buildVerificationData(dailyLog);
+    const verification = await this.resolveVerificationData(dailyLog);
     const normalizedProvidedCode = providedCode?.trim() || null;
     const reason = getVerificationReason(
       verification.code,
@@ -257,7 +292,7 @@ export class DailyLogPdfService {
       throw new NotFoundException("Daily log not found");
     }
 
-    const verification = buildVerificationData(dailyLog);
+    const verification = await this.resolveVerificationData(dailyLog);
     const reason = getVerificationReason(
       verification.code,
       normalizedProvidedCode,
@@ -280,6 +315,194 @@ export class DailyLogPdfService {
       verified: reason === "MATCH",
       ...(warning ? { warning } : {}),
     };
+  }
+
+  private async resolveVerificationData(dailyLog: DailyLogForPdf) {
+    if (dailyLog.status === DailyLogStatus.CLOSED) {
+      const snapshot = await this.findFinalSnapshot(dailyLog.id);
+      const snapshotHash = snapshot?.document.fileHash;
+
+      if (snapshotHash) {
+        return buildVerificationDataFromHash(dailyLog, snapshotHash);
+      }
+    }
+
+    return buildVerificationData(dailyLog);
+  }
+
+  private async findFinalSnapshot(dailyLogId: string) {
+    return this.prisma.dailyLogPdfVersion.findFirst({
+      where: {
+        dailyLogId,
+        status: PdfVersionStatus.GENERATED,
+        document: {
+          dailyLogDocuments: {
+            some: {
+              dailyLogId,
+              documentRole: DailyLogDocumentRole.GENERATED_PDF,
+            },
+          },
+        },
+      },
+      include: {
+        document: true,
+      },
+      orderBy: {
+        versionNumber: "desc",
+      },
+    });
+  }
+
+  private async readSnapshot(
+    snapshot: Awaited<ReturnType<DailyLogPdfService["findFinalSnapshot"]>>,
+  ) {
+    if (!snapshot) {
+      throw new NotFoundException("Daily log PDF snapshot not found");
+    }
+
+    const filePath = resolveSnapshotPath(snapshot.document.fileUrl);
+
+    try {
+      await access(filePath, constants.R_OK);
+
+      return {
+        buffer: await readFile(filePath),
+        fileName: snapshot.document.fileName,
+      };
+    } catch {
+      throw new NotFoundException("Daily log PDF snapshot file not found");
+    }
+  }
+
+  private async persistFinalSnapshot(
+    dailyLog: DailyLogForPdf,
+    pdf: { buffer: Buffer },
+    verification: VerificationData,
+    generatedBy: CurrentUserPayload,
+    audit?: AuditRequestContext,
+  ) {
+    const existingSnapshot = await this.findFinalSnapshot(dailyLog.id);
+
+    if (existingSnapshot) {
+      return;
+    }
+
+    const documentType = await this.prisma.documentType.upsert({
+      where: {
+        code: "GENERATED_DAILY_LOG_PDF",
+      },
+      update: {
+        name: "Generated Daily Log Pdf",
+      },
+      create: {
+        code: "GENERATED_DAILY_LOG_PDF",
+        name: "Generated Daily Log Pdf",
+      },
+    });
+    const versionNumber = await this.getNextPdfVersionNumber(dailyLog.id);
+    const fileName = `bitacora-${formatDateForFileName(
+      dailyLog.logDate,
+    )}-final-v${versionNumber}.pdf`;
+    const storagePath = join(
+      "uploads",
+      "daily-log-pdfs",
+      dailyLog.id,
+      `${Date.now()}-${fileName}`,
+    );
+    const absolutePath = resolveSnapshotPath(storagePath);
+
+    await mkdir(dirname(absolutePath), { recursive: true });
+
+    let documentCreated = false;
+
+    try {
+      await writeFile(absolutePath, pdf.buffer, { flag: "wx" });
+
+      const document = await this.prisma.document.create({
+        data: {
+          projectId: dailyLog.projectId,
+          documentTypeId: documentType.id,
+          uploadedById: generatedBy.sub,
+          title: `Snapshot final bitacora ${formatDateForFileName(
+            dailyLog.logDate,
+          )}`,
+          description:
+            "Snapshot documental final generado al cerrar la bitacora diaria.",
+          fileName,
+          fileUrl: storagePath,
+          storageProvider: DocumentStorageProvider.LOCAL,
+          mimeType: "application/pdf",
+          fileSize: BigInt(pdf.buffer.length),
+          fileHash: verification.hash,
+          dailyLogDocuments: {
+            create: {
+              dailyLogId: dailyLog.id,
+              documentRole: DailyLogDocumentRole.GENERATED_PDF,
+            },
+          },
+          pdfVersions: {
+            create: {
+              dailyLogId: dailyLog.id,
+              versionNumber,
+              generatedById: generatedBy.sub,
+              status: PdfVersionStatus.GENERATED,
+            },
+          },
+        },
+        include: {
+          pdfVersions: {
+            where: {
+              dailyLogId: dailyLog.id,
+              versionNumber,
+            },
+          },
+        },
+      });
+      documentCreated = true;
+      const pdfVersion = document.pdfVersions[0];
+
+      if (pdfVersion) {
+        await this.auditService.record({
+          ...(audit ?? { actorId: generatedBy.sub }),
+          actorId: generatedBy.sub,
+          action: "CREATE",
+          entity: "DailyLogPdfVersion",
+          entityId: pdfVersion.id,
+          newValue: {
+            dailyLogId: dailyLog.id,
+            documentId: document.id,
+            immutableSnapshot: true,
+            versionNumber,
+          },
+        });
+      }
+    } catch (error) {
+      if (!documentCreated) {
+        await safeUnlink(absolutePath);
+      }
+
+      if (isUniqueConstraintError(error)) {
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  private async getNextPdfVersionNumber(dailyLogId: string) {
+    const lastVersion = await this.prisma.dailyLogPdfVersion.findFirst({
+      where: {
+        dailyLogId,
+      },
+      orderBy: {
+        versionNumber: "desc",
+      },
+      select: {
+        versionNumber: true,
+      },
+    });
+
+    return (lastVersion?.versionNumber ?? 0) + 1;
   }
 }
 
@@ -320,6 +543,14 @@ function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
   const hash = createHash("sha256")
     .update(JSON.stringify(buildDocumentHashPayload(dailyLog)))
     .digest("hex");
+
+  return buildVerificationDataFromHash(dailyLog, hash);
+}
+
+function buildVerificationDataFromHash(
+  dailyLog: DailyLogForPdf,
+  hash: string,
+): VerificationData {
   const code = hash.slice(0, 16);
   const baseUrl = getPublicAppUrl();
 
@@ -330,6 +561,25 @@ function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
       dailyLog.id,
     )}?code=${encodeURIComponent(code)}`,
   };
+}
+
+function resolveSnapshotPath(fileUrl: string) {
+  return isAbsolute(fileUrl) ? fileUrl : join(process.cwd(), fileUrl);
+}
+
+async function safeUnlink(filePath: string) {
+  try {
+    await unlink(filePath);
+  } catch {
+    return;
+  }
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
 }
 
 function getVerificationReason(

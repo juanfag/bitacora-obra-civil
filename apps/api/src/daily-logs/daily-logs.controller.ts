@@ -75,9 +75,13 @@ export class DailyLogsController {
   async downloadPdf(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
+    @AuditContext() audit: AuditRequestContext,
     @Res() response: Response,
   ) {
-    const pdf = await this.dailyLogPdfService.generate(id, user);
+    const pdf = await this.dailyLogPdfService.generate(id, user, {
+      ...audit,
+      actorId: user.sub,
+    });
 
     response.setHeader("Content-Type", "application/pdf");
     response.setHeader(
@@ -278,15 +282,22 @@ export class DailyLogsController {
   @ApiConflictResponse({ description: "Daily log must be APPROVED to be closed." })
   @Permissions("daily-logs:update")
   @UseGuards(DailyLogProjectAccessGuard)
-  close(
+  async close(
     @Param("id") id: string,
     @CurrentUser() user: CurrentUserPayload,
     @AuditContext() audit: AuditRequestContext,
   ) {
-    return this.dailyLogsService.close(id, {
+    const dailyLog = await this.dailyLogsService.close(id, {
       ...audit,
       actorId: user.sub,
     });
+
+    await this.dailyLogPdfService.generate(id, user, {
+      ...audit,
+      actorId: user.sub,
+    });
+
+    return dailyLog;
   }
 
   @Post("daily-logs/:id/return-to-draft")
