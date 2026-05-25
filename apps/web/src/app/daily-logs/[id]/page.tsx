@@ -40,6 +40,12 @@ export default function DailyLogDetailPage() {
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [eventTypesError, setEventTypesError] = useState<string | null>(null);
+  const [documentEvidence, setDocumentEvidence] =
+    useState<DocumentEvidence | null>(null);
+  const [documentEvidenceError, setDocumentEvidenceError] =
+    useState<string | null>(null);
+  const [isLoadingDocumentEvidence, setIsLoadingDocumentEvidence] =
+    useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -56,6 +62,8 @@ export default function DailyLogDetailPage() {
     setIsLoading(true);
     setError(null);
     setEventTypesError(null);
+    setDocumentEvidenceError(null);
+    setDocumentEvidence(null);
     setNotFound(false);
 
     try {
@@ -73,6 +81,27 @@ export default function DailyLogDetailPage() {
 
       setDailyLog(response);
       setDailyLogEvents(eventsWithAttachments);
+      setIsLoadingDocumentEvidence(true);
+
+      try {
+        const evidenceResponse = await apiRequest<DocumentEvidence>(
+          `/daily-logs/${encodeURIComponent(params.id)}/document-evidence`,
+        );
+        setDocumentEvidence(evidenceResponse);
+      } catch (caughtError) {
+        setDocumentEvidence(null);
+
+        if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        setDocumentEvidenceError(
+          "No fue posible cargar la evidencia documental en este momento.",
+        );
+      } finally {
+        setIsLoadingDocumentEvidence(false);
+      }
 
       try {
         const eventTypesResponse = await getEventTypes();
@@ -393,6 +422,16 @@ export default function DailyLogDetailPage() {
               />
             </InfoCard>
 
+            <InfoCard title="Evidencia documental">
+              <DocumentEvidenceSection
+                evidence={documentEvidence}
+                error={documentEvidenceError}
+                isDownloadingPdf={isDownloadingPdf}
+                isLoading={isLoadingDocumentEvidence}
+                onDownloadPdf={downloadPdf}
+              />
+            </InfoCard>
+
             <InfoCard title="Metadatos">
               <p>
                 <strong>ID del proyecto:</strong>{" "}
@@ -425,6 +464,180 @@ type CollectionResponse<T> =
       items?: T[];
       results?: T[];
     };
+
+type DocumentEvidence = {
+  dailyLogId: string;
+  dailyLogShortId: string;
+  projectId: string;
+  projectName: string;
+  logDate: string;
+  status: string;
+  isClosed: boolean;
+  latestPdfVersion: number | null;
+  documentId: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  fileSize: number | null;
+  generatedAt: string | null;
+  generatedBy: {
+    id: string;
+    fullName: string | null;
+  } | null;
+  verificationCode: string | null;
+  shortHash: string | null;
+  publicVerificationUrl: string | null;
+  auditSummary: {
+    total: number;
+    latest: Array<{
+      action: string;
+      createdAt: string;
+      entityId: string;
+      entityName: string;
+      performedById: string | null;
+    }>;
+  };
+  message: string;
+};
+
+function DocumentEvidenceSection({
+  evidence,
+  error,
+  isDownloadingPdf,
+  isLoading,
+  onDownloadPdf,
+}: {
+  evidence: DocumentEvidence | null;
+  error: string | null;
+  isDownloadingPdf: boolean;
+  isLoading: boolean;
+  onDownloadPdf: () => void;
+}) {
+  if (isLoading) {
+    return <p className="muted">Cargando evidencia documental...</p>;
+  }
+
+  if (error) {
+    return <p className="form-error">{error}</p>;
+  }
+
+  if (!evidence) {
+    return (
+      <p className="muted">
+        No hay evidencia documental disponible para esta bitácora.
+      </p>
+    );
+  }
+
+  if (!evidence.isClosed) {
+    return (
+      <div className="stack">
+        <p className="muted">
+          La evidencia documental final estará disponible cuando la bitácora sea cerrada.
+        </p>
+        <p className="muted">{evidence.message}</p>
+      </div>
+    );
+  }
+
+  if (!evidence.documentId) {
+    return (
+      <div className="stack">
+        <p className="muted">No hay evidencia documental final disponible.</p>
+        <p className="muted">{evidence.message}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack">
+      <div className="status-row">
+        <span className="badge">Estado: {evidence.status}</span>
+        <span className="badge">
+          Versión PDF: {evidence.latestPdfVersion ?? "No disponible"}
+        </span>
+      </div>
+
+      <div className="metadata-grid">
+        <EvidenceField label="Nombre del archivo" value={evidence.fileName} />
+        <EvidenceField label="Tipo MIME" value={evidence.mimeType} />
+        <EvidenceField label="Tamaño" value={formatFileSize(evidence.fileSize)} />
+        <EvidenceField
+          label="Fecha/hora de generación"
+          value={
+            evidence.generatedAt
+              ? formatDateTime(evidence.generatedAt)
+              : "No disponible"
+          }
+        />
+        <EvidenceField
+          label="Generado por"
+          value={formatGeneratedBy(evidence.generatedBy)}
+        />
+        <EvidenceField
+          label="Código de verificación"
+          value={evidence.verificationCode}
+        />
+        <EvidenceField label="Hash corto seguro" value={evidence.shortHash} />
+        <EvidenceField
+          label="Estado documental"
+          value={evidence.message || "Evidencia documental final disponible."}
+        />
+      </div>
+
+      <div>
+        <h3>Resumen básico de auditoría</h3>
+        <p className="muted">Registros relacionados: {evidence.auditSummary.total}</p>
+        {evidence.auditSummary.latest.length > 0 ? (
+          <ul>
+            {evidence.auditSummary.latest.map((item) => (
+              <li key={`${item.entityName}-${item.entityId}-${item.createdAt}`}>
+                <strong>{item.action}</strong> · {item.entityName} ·{" "}
+                {formatDateTime(item.createdAt)}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">Sin registros de auditoría relacionados.</p>
+        )}
+      </div>
+
+      <div className="toolbar">
+        {evidence.publicVerificationUrl ? (
+          <a
+            className="button secondary"
+            href={evidence.publicVerificationUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Verificación pública
+          </a>
+        ) : null}
+        <button
+          className="button secondary"
+          disabled={isDownloadingPdf}
+          onClick={onDownloadPdf}
+          type="button"
+        >
+          {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EvidenceField({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+}) {
+  return (
+    <p>
+      <strong>{label}:</strong> {value || "No disponible"}
+    </p>
+  );
+}
 
 function toCollection<T>(response: CollectionResponse<T>) {
   if (Array.isArray(response)) {
@@ -484,6 +697,32 @@ function formatTechnicalId(value: string) {
   }
 
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
+function formatGeneratedBy(
+  value: DocumentEvidence["generatedBy"],
+) {
+  if (!value) {
+    return "No disponible";
+  }
+
+  return value.fullName || formatTechnicalId(value.id);
+}
+
+function formatFileSize(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return "No disponible";
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatDate(value: string) {
