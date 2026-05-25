@@ -312,6 +312,7 @@ export class DailyLogPdfService {
       providedCode: normalizedProvidedCode,
       reason,
       status: dailyLog.status,
+      verificationCode: verification.code,
       verified: reason === "MATCH",
       ...(warning ? { warning } : {}),
     };
@@ -346,6 +347,12 @@ export class DailyLogPdfService {
       },
       include: {
         document: true,
+        generatedBy: {
+          select: {
+            fullName: true,
+            id: true,
+          },
+        },
       },
       orderBy: {
         versionNumber: "desc",
@@ -504,6 +511,146 @@ export class DailyLogPdfService {
 
     return (lastVersion?.versionNumber ?? 0) + 1;
   }
+
+  async getDocumentEvidence(
+    id: string,
+    user: CurrentUserPayload,
+    audit: AuditRequestContext,
+  ) {
+    const dailyLog = await this.prisma.dailyLog.findUnique({
+      where: { id },
+      include: dailyLogPdfInclude,
+    });
+
+    if (!dailyLog) {
+      throw new NotFoundException("Daily log not found");
+    }
+
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      user.sub,
+      dailyLog.projectId,
+    );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
+
+    if (dailyLog.status !== DailyLogStatus.CLOSED) {
+      return this.buildDocumentEvidenceResponse(dailyLog, null, {
+        auditSummary: await this.buildAuditSummary(dailyLog.id, null),
+        message:
+          "La bitacora aun no esta cerrada; no existe evidencia documental final.",
+      });
+    }
+
+    await this.generate(id, user, {
+      ...audit,
+      actorId: user.sub,
+    });
+
+    const snapshot = await this.findFinalSnapshot(dailyLog.id);
+
+    return this.buildDocumentEvidenceResponse(dailyLog, snapshot, {
+      auditSummary: await this.buildAuditSummary(dailyLog.id, snapshot?.id),
+      message: snapshot
+        ? "Evidencia documental final disponible."
+        : "No fue posible encontrar la evidencia documental final.",
+    });
+  }
+
+  private async buildDocumentEvidenceResponse(
+    dailyLog: DailyLogForPdf,
+    snapshot: Awaited<ReturnType<DailyLogPdfService["findFinalSnapshot"]>>,
+    options: {
+      auditSummary: Awaited<ReturnType<DailyLogPdfService["buildAuditSummary"]>>;
+      message: string;
+    },
+  ) {
+    const hash = snapshot?.document.fileHash ?? null;
+    const verification = hash
+      ? buildVerificationDataFromHash(dailyLog, hash)
+      : await this.resolveVerificationData(dailyLog);
+
+    return {
+      dailyLogId: dailyLog.id,
+      dailyLogShortId: shortId(dailyLog.id),
+      projectId: dailyLog.projectId,
+      projectName: dailyLog.project.name,
+      logDate: formatDateForFileName(dailyLog.logDate),
+      status: dailyLog.status,
+      isClosed: dailyLog.status === DailyLogStatus.CLOSED,
+      latestPdfVersion: snapshot?.versionNumber ?? null,
+      documentId: snapshot?.documentId ?? null,
+      fileName: snapshot?.document.fileName ?? null,
+      mimeType: snapshot?.document.mimeType ?? null,
+      fileSize: snapshot?.document.fileSize
+        ? Number(snapshot.document.fileSize)
+        : null,
+      generatedAt: snapshot?.generatedAt?.toISOString() ?? null,
+      generatedBy: snapshot?.generatedBy
+        ? {
+            id: snapshot.generatedBy.id,
+            fullName: snapshot.generatedBy.fullName,
+          }
+        : null,
+      verificationCode: snapshot ? verification.code : null,
+      shortHash: hash ? toShortHash(hash) : null,
+      publicVerificationUrl: snapshot ? verification.url : null,
+      auditSummary: options.auditSummary,
+      message: options.message,
+    };
+  }
+
+  private async buildAuditSummary(
+    dailyLogId: string,
+    pdfVersionId: string | null | undefined,
+  ) {
+    const entityFilters: Prisma.AuditLogWhereInput[] = [
+      {
+        entityName: "DailyLog",
+        entityId: dailyLogId,
+      },
+    ];
+
+    if (pdfVersionId) {
+      entityFilters.push({
+        entityName: "DailyLogPdfVersion",
+        entityId: pdfVersionId,
+      });
+    }
+
+    const where: Prisma.AuditLogWhereInput = {
+      OR: entityFilters,
+    };
+    const [total, latest] = await this.prisma.$transaction([
+      this.prisma.auditLog.count({ where }),
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: 5,
+        select: {
+          action: true,
+          createdAt: true,
+          entityId: true,
+          entityName: true,
+          performedById: true,
+        },
+      }),
+    ]);
+
+    return {
+      total,
+      latest: latest.map((item) => ({
+        action: item.action,
+        createdAt: item.createdAt.toISOString(),
+        entityId: item.entityId,
+        entityName: item.entityName,
+        performedById: item.performedById,
+      })),
+    };
+  }
 }
 
 function renderPdf(
@@ -580,6 +727,10 @@ function isUniqueConstraintError(error: unknown) {
     error instanceof Prisma.PrismaClientKnownRequestError &&
     error.code === "P2002"
   );
+}
+
+function toShortHash(hash: string) {
+  return `${hash.slice(0, 8)}...${hash.slice(-4)}`;
 }
 
 function getVerificationReason(

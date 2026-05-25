@@ -91,28 +91,27 @@ export class DailyLogsController {
     response.send(pdf.buffer);
   }
 
-  @Get("daily-logs/:id/verification")
-  @ApiOperation({ summary: "Verify daily log document code" })
+  @Get("daily-logs/:id/document-evidence")
+  @ApiOperation({ summary: "Get daily log document evidence" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
-  @ApiQuery({
-    name: "code",
-    required: false,
-    description: "Short verification code printed in the PDF.",
-  })
   @ApiOkResponse({
-    description: "Daily log document verification result returned.",
+    description:
+      "Daily log document evidence returned without internal storage paths.",
   })
   @ApiNotFoundResponse({ description: "Daily log not found." })
   @ApiForbiddenResponse({
     description: "Authenticated user does not have access to the project.",
   })
   @Permissions("daily-logs:read")
-  verifyDocument(
+  getDocumentEvidence(
     @Param("id") id: string,
-    @Query("code") code: string | undefined,
     @CurrentUser() user: CurrentUserPayload,
+    @AuditContext() audit: AuditRequestContext,
   ) {
-    return this.dailyLogPdfService.verifyDocumentCode(id, code, user);
+    return this.dailyLogPdfService.getDocumentEvidence(id, user, {
+      ...audit,
+      actorId: user.sub,
+    });
   }
 
   @Get("daily-logs/:id")
