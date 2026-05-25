@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { CreateDailyLogEventForm } from "@/components/daily-logs/events/CreateDailyLogEventForm";
 import { DailyLogEventList } from "@/components/daily-logs/events/DailyLogEventList";
@@ -52,6 +53,8 @@ export default function DailyLogDetailPage() {
   const [processingAction, setProcessingAction] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [preliminarySignatures, setPreliminarySignatures] =
+    useState<Record<string, PreliminarySignature | null>>({});
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -432,6 +435,25 @@ export default function DailyLogDetailPage() {
               />
             </InfoCard>
 
+            <InfoCard title="Firmas digitales">
+              <DigitalSignaturesSection
+                dailyLogStatus={dailyLog.status}
+                onClearSignature={(signerId) =>
+                  setPreliminarySignatures((current) => ({
+                    ...current,
+                    [signerId]: null,
+                  }))
+                }
+                onUseSignature={(signerId, signature) =>
+                  setPreliminarySignatures((current) => ({
+                    ...current,
+                    [signerId]: signature,
+                  }))
+                }
+                signatures={preliminarySignatures}
+              />
+            </InfoCard>
+
             <InfoCard title="Metadatos">
               <p>
                 <strong>ID del proyecto:</strong>{" "}
@@ -498,6 +520,252 @@ type DocumentEvidence = {
   };
   message: string;
 };
+
+type PreliminarySignature = {
+  dataUrl: string;
+  signedAt: string;
+};
+
+type SignatureRole = {
+  id: string;
+  role: string;
+  title: string;
+};
+
+const SIGNATURE_ROLES: SignatureRole[] = [
+  {
+    id: "responsable",
+    role: "Responsable / Residente",
+    title: "Responsable / Residente",
+  },
+  {
+    id: "director",
+    role: "Director / Aprobador",
+    title: "Director / Aprobador",
+  },
+  {
+    id: "interventor",
+    role: "Interventor / Inspector",
+    title: "Interventor / Inspector",
+  },
+];
+
+function DigitalSignaturesSection({
+  dailyLogStatus,
+  onClearSignature,
+  onUseSignature,
+  signatures,
+}: {
+  dailyLogStatus: string;
+  onClearSignature: (signerId: string) => void;
+  onUseSignature: (signerId: string, signature: PreliminarySignature) => void;
+  signatures: Record<string, PreliminarySignature | null>;
+}) {
+  const isClosed = dailyLogStatus === "CLOSED";
+
+  return (
+    <div className="stack">
+      <p className="muted">
+        Esta firma es una captura visual preliminar. La persistencia formal se implementará en la siguiente fase.
+      </p>
+      <p className="muted">
+        {isClosed
+          ? "La bitácora está cerrada; puedes revisar o capturar firmas preliminares, pero aún no se guardan formalmente."
+          : "La firma final será válida al cierre/aprobación según el flujo futuro."}
+      </p>
+
+      {SIGNATURE_ROLES.map((signer) => (
+        <SignatureCaptureCard
+          key={signer.id}
+          onClear={() => onClearSignature(signer.id)}
+          onUseSignature={(signature) => onUseSignature(signer.id, signature)}
+          signature={signatures[signer.id] ?? null}
+          signer={signer}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SignatureCaptureCard({
+  onClear,
+  onUseSignature,
+  signature,
+  signer,
+}: {
+  onClear: () => void;
+  onUseSignature: (signature: PreliminarySignature) => void;
+  signature: PreliminarySignature | null;
+  signer: SignatureRole;
+}) {
+  return (
+    <div className="panel">
+      <div className="status-row">
+        <div>
+          <h3>{signer.title}</h3>
+          <p className="muted">
+            <strong>Nombre:</strong> {signature ? "Firma capturada en sesión" : "Pendiente"}
+          </p>
+          <p className="muted">
+            <strong>Rol:</strong> {signer.role}
+          </p>
+          <p className="muted">
+            <strong>Fecha/hora:</strong>{" "}
+            {signature ? formatDateTime(signature.signedAt) : "No disponible"}
+          </p>
+        </div>
+        <span className="badge">{signature ? "Firmado" : "Pendiente"}</span>
+      </div>
+
+      <SignaturePad
+        onClear={onClear}
+        onUseSignature={(dataUrl) =>
+          onUseSignature({
+            dataUrl,
+            signedAt: new Date().toISOString(),
+          })
+        }
+      />
+
+      {signature ? (
+        <div className="stack">
+          <p className="muted">Previsualización de firma capturada:</p>
+          <img
+            alt={`Firma preliminar ${signer.role}`}
+            src={signature.dataUrl}
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+              maxHeight: 120,
+              maxWidth: "100%",
+              objectFit: "contain",
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SignaturePad({
+  onClear,
+  onUseSignature,
+}: {
+  onClear: () => void;
+  onUseSignature: (dataUrl: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isDrawingRef = useRef(false);
+  const hasInkRef = useRef(false);
+  const [hasInk, setHasInk] = useState(false);
+
+  useEffect(() => {
+    clearCanvas(canvasRef.current);
+  }, []);
+
+  function startDrawing(event: PointerEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+
+    if (!canvas || !context) {
+      return;
+    }
+
+    const point = getCanvasPoint(canvas, event);
+    isDrawingRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+  }
+
+  function draw(event: PointerEvent<HTMLCanvasElement>) {
+    if (!isDrawingRef.current) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+
+    if (!canvas || !context) {
+      return;
+    }
+
+    const point = getCanvasPoint(canvas, event);
+    context.lineTo(point.x, point.y);
+    context.strokeStyle = "#17202a";
+    context.lineWidth = 2.2;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.stroke();
+    hasInkRef.current = true;
+    setHasInk(true);
+  }
+
+  function stopDrawing(event: PointerEvent<HTMLCanvasElement>) {
+    if (!isDrawingRef.current) {
+      return;
+    }
+
+    isDrawingRef.current = false;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function clearSignature() {
+    clearCanvas(canvasRef.current);
+    hasInkRef.current = false;
+    setHasInk(false);
+    onClear();
+  }
+
+  function useSignature() {
+    const canvas = canvasRef.current;
+
+    if (!canvas || !hasInkRef.current) {
+      return;
+    }
+
+    onUseSignature(canvas.toDataURL("image/png"));
+  }
+
+  return (
+    <div className="stack">
+      <canvas
+        aria-label="Área visual de firma"
+        height={170}
+        onPointerCancel={stopDrawing}
+        onPointerDown={startDrawing}
+        onPointerLeave={stopDrawing}
+        onPointerMove={draw}
+        onPointerUp={stopDrawing}
+        ref={canvasRef}
+        style={{
+          background: "#ffffff",
+          border: "1px solid #cbd5e1",
+          borderRadius: 6,
+          height: 170,
+          maxWidth: "100%",
+          touchAction: "none",
+          width: "100%",
+        }}
+        width={520}
+      />
+      <div className="toolbar">
+        <button className="button secondary" onClick={clearSignature} type="button">
+          Limpiar firma
+        </button>
+        <button
+          className="button"
+          disabled={!hasInk}
+          onClick={useSignature}
+          type="button"
+        >
+          Usar firma
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function DocumentEvidenceSection({
   evidence,
@@ -723,6 +991,32 @@ function formatFileSize(value: number | null | undefined) {
   }
 
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function clearCanvas(canvas: HTMLCanvasElement | null) {
+  const context = canvas?.getContext("2d");
+
+  if (!canvas || !context) {
+    return;
+  }
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function getCanvasPoint(
+  canvas: HTMLCanvasElement,
+  event: PointerEvent<HTMLCanvasElement>,
+) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY,
+  };
 }
 
 function formatDate(value: string) {
