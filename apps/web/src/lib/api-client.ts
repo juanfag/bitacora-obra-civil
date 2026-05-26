@@ -113,6 +113,24 @@ export type DailyLogSignature = {
   previewDataUrl: string | null;
 };
 
+export type DailyLogAuditItem = {
+  id: string;
+  action: string;
+  entity: string;
+  entityId: string;
+  userId: string | null;
+  createdAt: string;
+  oldValue: unknown;
+  newValue: unknown;
+};
+
+export type DailyLogAuditResponse = {
+  dailyLogId: string;
+  total: number;
+  order: string;
+  items: DailyLogAuditItem[];
+};
+
 export function getMySignature() {
   return apiRequest<UserSignature>("/users/me/signature");
 }
@@ -149,6 +167,12 @@ export function applyDailyLogSignature(
       method: "POST",
       body: JSON.stringify({ signatureType }),
     },
+  );
+}
+
+export function getDailyLogAudit(dailyLogId: string) {
+  return apiRequest<DailyLogAuditResponse>(
+    `/daily-logs/${encodeURIComponent(dailyLogId)}/audit`,
   );
 }
 

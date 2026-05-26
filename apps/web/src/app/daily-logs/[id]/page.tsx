@@ -15,12 +15,14 @@ import {
 } from "@/components/workflow/WorkflowActions";
 import {
   ApiClientError,
+  DailyLogAuditResponse,
   DailyLogSignature,
   DailyLogSignatureType,
   UserSignature,
   applyDailyLogSignature,
   apiRequest,
   downloadDailyLogPdf,
+  getDailyLogAudit,
   getDailyLogEventAttachments,
   getDailyLogSignatures,
   getEventTypes,
@@ -65,6 +67,9 @@ export default function DailyLogDetailPage() {
   const [userSignature, setUserSignature] = useState<UserSignature | null>(null);
   const [signaturesError, setSignaturesError] = useState<string | null>(null);
   const [isLoadingSignatures, setIsLoadingSignatures] = useState(false);
+  const [audit, setAudit] = useState<DailyLogAuditResponse | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
   const [signingType, setSigningType] = useState<DailyLogSignatureType | null>(
     null,
   );
@@ -80,8 +85,10 @@ export default function DailyLogDetailPage() {
     setEventTypesError(null);
     setDocumentEvidenceError(null);
     setSignaturesError(null);
+    setAuditError(null);
     setDocumentEvidence(null);
     setDailyLogSignatures([]);
+    setAudit(null);
     setNotFound(false);
 
     try {
@@ -101,17 +108,21 @@ export default function DailyLogDetailPage() {
       setDailyLogEvents(eventsWithAttachments);
       setIsLoadingDocumentEvidence(true);
       setIsLoadingSignatures(true);
+      setIsLoadingAudit(true);
 
       try {
-        const [signaturesResponse, userSignatureResponse] = await Promise.all([
+        const [signaturesResponse, userSignatureResponse, auditResponse] = await Promise.all([
           getDailyLogSignatures(params.id),
           getMySignature(),
+          getDailyLogAudit(params.id),
         ]);
         setDailyLogSignatures(signaturesResponse);
         setUserSignature(userSignatureResponse);
+        setAudit(auditResponse);
       } catch (caughtError) {
         setDailyLogSignatures([]);
         setUserSignature(null);
+        setAudit(null);
 
         if (caughtError instanceof ApiClientError && caughtError.status === 401) {
           handleUnauthorized();
@@ -119,8 +130,10 @@ export default function DailyLogDetailPage() {
         }
 
         setSignaturesError("No fue posible cargar las firmas digitales.");
+        setAuditError("No fue posible cargar la auditoría.");
       } finally {
         setIsLoadingSignatures(false);
+        setIsLoadingAudit(false);
       }
 
       try {
@@ -513,6 +526,14 @@ export default function DailyLogDetailPage() {
                 signatures={dailyLogSignatures}
                 signingType={signingType}
                 userSignature={userSignature}
+              />
+            </InfoCard>
+
+            <InfoCard title="Auditoría">
+              <AuditSection
+                audit={audit}
+                error={auditError}
+                isLoading={isLoadingAudit}
               />
             </InfoCard>
 
@@ -981,6 +1002,93 @@ function SignaturePad({
   );
 }
 
+function AuditSection({
+  audit,
+  error,
+  isLoading,
+}: {
+  audit: DailyLogAuditResponse | null;
+  error: string | null;
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return <p className="muted">Cargando auditoría...</p>;
+  }
+
+  if (error) {
+    return <p className="form-error">{error}</p>;
+  }
+
+  if (!audit || audit.items.length === 0) {
+    return (
+      <div className="stack">
+        <p className="muted">Línea de tiempo de eventos de la bitácora.</p>
+        <p className="muted">Aún no hay eventos de auditoría registrados.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack">
+      <p className="muted">Línea de tiempo de eventos de la bitácora.</p>
+      <div className="status-row">
+        <span className="badge">Total: {audit.total}</span>
+        <span className="badge">Orden: {audit.order}</span>
+      </div>
+
+      <div className="timeline">
+        {audit.items.map((item) => (
+          <div className="timeline-item" key={item.id}>
+            <span aria-hidden="true" className="timeline-marker" />
+            <article className="card timeline-card">
+              <div className="status-row">
+                <span className="badge">{formatAuditAction(item.action)}</span>
+                {isRelevantAuditAction(item.action) ? (
+                  <span className="badge">Relevante</span>
+                ) : null}
+                <span className="badge">{formatDateTime(item.createdAt)}</span>
+              </div>
+              <p>
+                <strong>Entidad:</strong> {item.entity}
+              </p>
+              <p>
+                <strong>Usuario:</strong>{" "}
+                {item.userId ? formatTechnicalId(item.userId) : "No disponible"}
+              </p>
+              <AuditValueSummary label="Antes" value={item.oldValue} />
+              <AuditValueSummary label="Después" value={item.newValue} />
+            </article>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AuditValueSummary({
+  label,
+  value,
+}: {
+  label: string;
+  value: unknown;
+}) {
+  const summary = summarizeAuditValue(value);
+
+  if (!summary) {
+    return (
+      <p className="muted">
+        <strong>{label}:</strong> Sin datos.
+      </p>
+    );
+  }
+
+  return (
+    <p className="muted">
+      <strong>{label}:</strong> {summary}
+    </p>
+  );
+}
+
 function DocumentEvidenceSection({
   evidence,
   error,
@@ -1205,6 +1313,134 @@ function formatFileSize(value: number | null | undefined) {
   }
 
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatAuditAction(action: string) {
+  const labels: Record<string, string> = {
+    APPROVE: "Aprobación",
+    CLOSE: "Cierre",
+    CREATE: "Creación",
+    DAILY_LOG_SIGNATURE_APPLIED: "Firma aplicada",
+    GENERATE_PDF: "PDF generado",
+    REJECT: "Rechazo",
+    SUBMIT: "Envío a revisión",
+    UPDATE: "Actualización",
+    VOID: "Anulación",
+  };
+
+  return labels[action] ?? action;
+}
+
+function isRelevantAuditAction(action: string) {
+  return (
+    action === "DAILY_LOG_SIGNATURE_APPLIED" ||
+    action === "GENERATE_PDF" ||
+    action === "SUBMIT" ||
+    action === "APPROVE" ||
+    action === "REJECT" ||
+    action === "CLOSE" ||
+    action === "VOID"
+  );
+}
+
+function summarizeAuditValue(value: unknown) {
+  const entries = collectAuditEntries(value).slice(0, 6);
+
+  if (entries.length === 0) {
+    return "";
+  }
+
+  return entries
+    .map(([key, item]) => `${formatAuditKey(key)}: ${item}`)
+    .join(" · ");
+}
+
+function collectAuditEntries(value: unknown, prefix = ""): Array<[string, string]> {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      collectAuditEntries(item, prefix ? `${prefix}.${index}` : String(index)),
+    );
+  }
+
+  return Object.entries(value).flatMap(([key, item]) => {
+    if (isSensitiveAuditKey(key)) {
+      return [];
+    }
+
+    const nextKey = prefix ? `${prefix}.${key}` : key;
+
+    if (item === null || item === undefined) {
+      return [];
+    }
+
+    if (typeof item === "object") {
+      return collectAuditEntries(item, nextKey);
+    }
+
+    const text = String(item);
+
+    if (isSensitiveAuditText(text)) {
+      return [];
+    }
+
+    return [[nextKey, truncateText(text, 80)]];
+  });
+}
+
+function formatAuditKey(value: string) {
+  const labels: Record<string, string> = {
+    dailyLogId: "Bitácora",
+    operation: "Operación",
+    projectId: "Proyecto",
+    signedAt: "Firmado",
+    signerName: "Firmante",
+    signerRole: "Rol",
+    signerUserId: "Usuario firmante",
+    signatureType: "Tipo de firma",
+    status: "Estado",
+  };
+
+  return labels[value] ?? value;
+}
+
+function isSensitiveAuditKey(key: string) {
+  const normalized = key.toLowerCase();
+
+  return (
+    normalized.includes("base64") ||
+    normalized.includes("checksum") ||
+    normalized.includes("fileurl") ||
+    normalized.includes("hash") ||
+    normalized.includes("path") ||
+    normalized.includes("snapshotpath") ||
+    normalized.includes("storagepath")
+  );
+}
+
+function isSensitiveAuditText(value: string) {
+  return (
+    value.includes("base64") ||
+    value.includes("data:image") ||
+    value.includes("storagePath") ||
+    value.includes("uploads/") ||
+    value.includes("uploads\\") ||
+    value.includes("C:\\") ||
+    value.includes("/mnt/") ||
+    value.includes("apps/api") ||
+    /^[a-f0-9]{64}$/i.test(value)
+  );
+}
+
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 3)}...`;
 }
 
 function clearCanvas(canvas: HTMLCanvasElement | null) {
