@@ -1,13 +1,16 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { DailyLog, DailyLogStatus, Prisma } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
+import { CurrentUserPayload } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { DailyLogWorkflowService } from "./daily-log-workflow.service";
 import { isEditableStatus } from "./daily-log-status.helper";
 import { CreateDailyLogDto } from "./dto/create-daily-log.dto";
@@ -21,6 +24,7 @@ export class DailyLogsService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly workflowService: DailyLogWorkflowService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
   async findAll(query: FindDailyLogsQueryDto) {
@@ -208,6 +212,68 @@ export class DailyLogsService {
     return this.workflowService.returnToDraft(id, audit);
   }
 
+  async getAudit(id: string, user: CurrentUserPayload) {
+    const dailyLog = await this.prisma.dailyLog.findFirst({
+      where: {
+        id,
+        status: {
+          not: DailyLogStatus.VOIDED,
+        },
+      },
+      select: {
+        id: true,
+        projectId: true,
+      },
+    });
+
+    if (!dailyLog) {
+      throw new NotFoundException("Daily log not found");
+    }
+
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      user.sub,
+      dailyLog.projectId,
+    );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
+
+    const where = buildDailyLogAuditWhere(id);
+    const items = await this.prisma.auditLog.findMany({
+      where,
+      orderBy: {
+        createdAt: "asc",
+      },
+      select: {
+        action: true,
+        createdAt: true,
+        entityId: true,
+        entityName: true,
+        id: true,
+        newValue: true,
+        oldValue: true,
+        performedById: true,
+      },
+    });
+
+    return {
+      dailyLogId: id,
+      total: items.length,
+      order: "createdAt:asc",
+      items: items.map((item) => ({
+        id: item.id,
+        action: item.action,
+        entity: item.entityName,
+        entityId: item.entityId,
+        userId: item.performedById,
+        createdAt: item.createdAt.toISOString(),
+        oldValue: sanitizeAuditValue(item.oldValue),
+        newValue: sanitizeAuditValue(item.newValue),
+      })),
+    };
+  }
+
   private async ensureProjectExists(projectId: string) {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -372,4 +438,91 @@ export class DailyLogsService {
 
     throw error;
   }
+}
+
+function buildDailyLogAuditWhere(dailyLogId: string): Prisma.AuditLogWhereInput {
+  return {
+    OR: [
+      {
+        entityName: "DailyLog",
+        entityId: dailyLogId,
+      },
+      {
+        newValue: {
+          path: ["dailyLogId"],
+          equals: dailyLogId,
+        },
+      },
+      {
+        oldValue: {
+          path: ["dailyLogId"],
+          equals: dailyLogId,
+        },
+      },
+    ],
+  };
+}
+
+function sanitizeAuditValue(value: Prisma.JsonValue | null) {
+  if (value === null) {
+    return null;
+  }
+
+  return sanitizeJsonValue(value);
+}
+
+function sanitizeJsonValue(value: Prisma.JsonValue): Prisma.JsonValue {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeJsonValue(item));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !isSensitiveAuditKey(key))
+        .map(([key, item]) => [key, sanitizeJsonValue(item as Prisma.JsonValue)]),
+    );
+  }
+
+  if (typeof value === "string") {
+    return sanitizeAuditString(value);
+  }
+
+  return value;
+}
+
+function isSensitiveAuditKey(key: string) {
+  const normalizedKey = key.toLowerCase();
+
+  return (
+    normalizedKey.includes("snapshotpath") ||
+    normalizedKey.includes("storagepath") ||
+    normalizedKey.includes("fileurl") ||
+    normalizedKey.includes("path") ||
+    normalizedKey.includes("base64") ||
+    normalizedKey.includes("checksum") ||
+    normalizedKey.includes("hash")
+  );
+}
+
+function sanitizeAuditString(value: string) {
+  if (isSensitiveAuditString(value)) {
+    return "[redacted]";
+  }
+
+  return value;
+}
+
+function isSensitiveAuditString(value: string) {
+  return (
+    value.includes("data:image") ||
+    value.includes("base64") ||
+    value.includes("storagePath") ||
+    value.includes("uploads/") ||
+    value.includes("uploads\\") ||
+    value.includes("C:\\") ||
+    value.includes("/mnt/") ||
+    value.includes("apps/api") ||
+    /^[a-f0-9]{64}$/i.test(value)
+  );
 }

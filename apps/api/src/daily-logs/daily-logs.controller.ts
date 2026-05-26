@@ -133,6 +133,27 @@ export class DailyLogsController {
     return this.dailyLogSignaturesService.findByDailyLog(id, user);
   }
 
+  @Get("daily-logs/:id/audit")
+  @ApiOperation({
+    summary: "Get daily log audit timeline",
+    description:
+      "Returns audit events related to the daily log ordered by createdAt ascending.",
+  })
+  @ApiParam({ name: "id", description: "Daily log UUID" })
+  @ApiOkResponse({ description: "Daily log audit timeline returned." })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({
+    description: "Authenticated user does not have access to the project.",
+  })
+  @ApiNotFoundResponse({ description: "Daily log not found." })
+  @Permissions("daily-logs:read")
+  getAudit(
+    @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.dailyLogsService.getAudit(id, user);
+  }
+
   @Post("daily-logs/:id/signatures")
   @ApiOperation({ summary: "Apply current user's master signature to a daily log" })
   @ApiParam({ name: "id", description: "Daily log UUID" })
