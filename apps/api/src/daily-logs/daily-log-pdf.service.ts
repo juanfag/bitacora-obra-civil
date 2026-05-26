@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import {
   DailyLogDocumentRole,
+  DailyLogSignatureType,
   DailyLogStatus,
   DocumentStorageProvider,
   PdfVersionStatus,
@@ -73,6 +74,11 @@ const dailyLogPdfInclude = {
       fullName: true,
     },
   },
+  signatures: {
+    orderBy: {
+      signedAt: "asc",
+    },
+  },
   statusHistory: {
     include: {
       changedBy: {
@@ -95,6 +101,7 @@ type DailyLogForPdf = Prisma.DailyLogGetPayload<{
 type EventForPdf = DailyLogForPdf["dailyLogEvents"][number];
 type AttachmentForPdf = EventForPdf["attachments"][number];
 type StatusHistoryForPdf = DailyLogForPdf["statusHistory"][number];
+type SignatureForPdf = DailyLogForPdf["signatures"][number];
 
 type EventPhotoEvidence = {
   photos: PhotoEvidence[];
@@ -116,7 +123,13 @@ type RenderContext = {
     subtitle: string;
     title: string;
   };
+  signatures: SignatureSnapshotForPdf[];
   verification: VerificationData;
+};
+
+type SignatureSnapshotForPdf = {
+  imageBuffer: Buffer | null;
+  signature: SignatureForPdf;
 };
 
 type VerificationData = {
@@ -172,12 +185,16 @@ export class DailyLogPdfService {
     if (dailyLog.status === DailyLogStatus.CLOSED) {
       const snapshot = await this.findFinalSnapshot(dailyLog.id);
 
-      if (snapshot) {
+      if (
+        snapshot &&
+        !hasSignatureAfterSnapshot(dailyLog.signatures, snapshot.generatedAt)
+      ) {
         return this.readSnapshot(snapshot);
       }
     }
 
     const verification = await this.resolveVerificationData(dailyLog);
+    const signatures = await buildSignatureSnapshots(dailyLog.signatures);
     const context: RenderContext = {
       generatedAt: new Date(),
       generatedBy: formatPerson(generatedBy),
@@ -190,6 +207,7 @@ export class DailyLogPdfService {
         )}`,
         title: "Bitácora diaria de obra",
       },
+      signatures,
       verification,
     };
     const photoEvidenceByEventId = await buildDailyLogPhotoEvidence(
@@ -686,6 +704,44 @@ async function buildDailyLogPhotoEvidence(events: EventForPdf[]) {
   return evidenceByEventId;
 }
 
+async function buildSignatureSnapshots(signatures: SignatureForPdf[]) {
+  return Promise.all(
+    signatures.map(async (signature) => ({
+      imageBuffer: await normalizeSignatureImage(signature),
+      signature,
+    })),
+  );
+}
+
+async function normalizeSignatureImage(signature: SignatureForPdf) {
+  if (!isPdfEmbeddableSignature(signature)) {
+    return null;
+  }
+
+  try {
+    await access(signature.signatureSnapshotPath, constants.R_OK);
+    return await readFile(signature.signatureSnapshotPath);
+  } catch {
+    return null;
+  }
+}
+
+function isPdfEmbeddableSignature(signature: SignatureForPdf) {
+  return (
+    signature.signatureSnapshotMimeType === "image/jpeg" ||
+    signature.signatureSnapshotMimeType === "image/png"
+  );
+}
+
+function hasSignatureAfterSnapshot(
+  signatures: SignatureForPdf[],
+  snapshotGeneratedAt: Date,
+) {
+  return signatures.some(
+    (signature) => signature.signedAt.getTime() > snapshotGeneratedAt.getTime(),
+  );
+}
+
 function buildVerificationData(dailyLog: DailyLogForPdf): VerificationData {
   const hash = createHash("sha256")
     .update(JSON.stringify(buildDocumentHashPayload(dailyLog)))
@@ -1043,7 +1099,7 @@ function addControlAndSignaturesSection(
 
   addStatusHistory(doc, dailyLog.statusHistory);
   addDigitalRecordLegend(doc);
-  addFormalSignatureBlocks(doc, dailyLog, workflow);
+  addAppliedSignatureSection(doc, context.signatures);
 }
 
 type WorkflowActionSummary = {
@@ -1197,6 +1253,142 @@ function addFormalSignatureBlocks(
   ];
 
   blocks.forEach((block) => addSignatureCard(doc, block));
+}
+
+function addAppliedSignatureSection(
+  doc: PDFKit.PDFDocument,
+  signatures: SignatureSnapshotForPdf[],
+) {
+  addSectionTitle(doc, "Firmas");
+
+  const blocks = [
+    {
+      emptyText: "Firma no registrada",
+      role: "Responsable",
+      signature: getSignatureByType(signatures, DailyLogSignatureType.RESPONSIBLE),
+      title: "Responsable",
+    },
+    {
+      emptyText: "Firma no registrada",
+      role: "Aprobador",
+      signature: getSignatureByType(signatures, DailyLogSignatureType.APPROVER),
+      title: "Aprobador",
+    },
+  ];
+
+  blocks.forEach((block) => renderSignatureBlock(doc, block));
+}
+
+function getSignatureByType(
+  signatures: SignatureSnapshotForPdf[],
+  signatureType: DailyLogSignatureType,
+) {
+  return signatures.find(
+    (item) => item.signature.signatureType === signatureType,
+  );
+}
+
+function renderSignatureBlock(
+  doc: PDFKit.PDFDocument,
+  block: {
+    emptyText: string;
+    role: string;
+    signature?: SignatureSnapshotForPdf;
+    title: string;
+  },
+) {
+  ensureSpace(doc, 146);
+
+  const x = PAGE.left;
+  const y = doc.y;
+  const width = contentWidth(doc);
+  const imageX = x + 14;
+  const imageY = y + 34;
+  const imageWidth = 180;
+  const imageHeight = 58;
+  const textX = imageX + imageWidth + 18;
+  const textWidth = width - imageWidth - 46;
+
+  doc
+    .roundedRect(x, y, width, 126, 5)
+    .strokeColor(COLORS.softBorder)
+    .lineWidth(0.7)
+    .stroke();
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor(COLORS.primary)
+    .text(block.title, x + 14, y + 12, {
+      width: width - 28,
+    });
+
+  if (block.signature?.imageBuffer) {
+    try {
+      doc.image(block.signature.imageBuffer, imageX, imageY, {
+        fit: [imageWidth, imageHeight],
+      });
+    } catch {
+      addSignatureMissingText(doc, block.emptyText, imageX, imageY, imageWidth);
+    }
+  } else {
+    addSignatureMissingText(doc, block.emptyText, imageX, imageY, imageWidth);
+  }
+
+  doc
+    .moveTo(imageX, imageY + imageHeight + 9)
+    .lineTo(imageX + imageWidth, imageY + imageHeight + 9)
+    .strokeColor(COLORS.border)
+    .lineWidth(0.7)
+    .stroke();
+
+  const signer = block.signature?.signature;
+  addSignatureField(
+    doc,
+    "Nombre",
+    signer?.signerName ?? "Firma no registrada",
+    textX,
+    imageY,
+    textWidth,
+  );
+  addSignatureField(
+    doc,
+    "Rol",
+    signer?.signerRole ?? block.role,
+    textX,
+    imageY + 32,
+    textWidth,
+  );
+  addSignatureField(
+    doc,
+    "Fecha/hora",
+    signer ? formatDateTime(signer.signedAt) : "Firma no registrada",
+    textX,
+    imageY + 64,
+    textWidth,
+  );
+
+  doc.y = y + 140;
+}
+
+function addSignatureMissingText(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+) {
+  doc
+    .roundedRect(x, y, width, 58, 4)
+    .fillAndStroke(COLORS.fill, COLORS.softBorder);
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor(COLORS.muted)
+    .text(text, x + 8, y + 23, {
+      align: "center",
+      width: width - 16,
+    });
 }
 
 function addVerificationSection(
