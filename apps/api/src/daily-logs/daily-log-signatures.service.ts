@@ -175,7 +175,11 @@ export class DailyLogSignaturesService {
         entityId: signature.id,
         newValue: {
           dailyLogId: id,
+          operation: "CREATED",
+          projectId: dailyLog.projectId,
+          signedAt: signature.signedAt.toISOString(),
           signatureType,
+          signerName: signature.signerName,
           signerUserId: user.sub,
           signerRole: signature.signerRole,
         },
