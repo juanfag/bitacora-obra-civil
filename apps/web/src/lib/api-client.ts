@@ -131,6 +131,42 @@ export type DailyLogAuditResponse = {
   items: DailyLogAuditItem[];
 };
 
+export type DashboardMetrics = {
+  activeProjects: number;
+  openDailyLogs: number;
+  pendingApprovalDailyLogs: number;
+  closedDailyLogs: number;
+  totalEvents: number;
+  totalActiveUsers: number;
+};
+
+export type DashboardRecentActivityItem = {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  projectId: string | null;
+  projectName: string | null;
+  userId: string | null;
+  userName: string | null;
+  createdAt: string;
+};
+
+export type DashboardRecentActivity = {
+  limit: number;
+  items: DashboardRecentActivityItem[];
+};
+
+export function getDashboardMetrics() {
+  return apiRequest<DashboardMetrics>("/dashboard/metrics");
+}
+
+export function getDashboardRecentActivity(limit = 20) {
+  return apiRequest<DashboardRecentActivity>(
+    `/dashboard/recent-activity?limit=${encodeURIComponent(limit)}`,
+  );
+}
+
 export function getMySignature() {
   return apiRequest<UserSignature>("/users/me/signature");
 }

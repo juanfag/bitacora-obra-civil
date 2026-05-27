@@ -10,6 +10,28 @@ const PLATFORM_PROJECT_ACCESS_PERMISSION = "organizations:create";
 export class ProjectAccessPolicy {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getAccessibleProjectIds(userId: string) {
+    if (await this.hasPlatformProjectAccess(userId)) {
+      return null;
+    }
+
+    const projectMemberships = await this.prisma.projectUser.findMany({
+      where: {
+        userId,
+        status: RecordStatus.ACTIVE,
+        role: {
+          status: RecordStatus.ACTIVE,
+        },
+      },
+      distinct: ["projectId"],
+      select: {
+        projectId: true,
+      },
+    });
+
+    return projectMemberships.map((membership) => membership.projectId);
+  }
+
   async canAccessProject(userId: string, projectId: string) {
     const projectMembership = await this.prisma.projectUser.findFirst({
       where: {

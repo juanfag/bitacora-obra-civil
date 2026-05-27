@@ -128,8 +128,15 @@ type RenderContext = {
 };
 
 type SignatureSnapshotForPdf = {
-  imageBuffer: Buffer | null;
+  image: SignatureImageForPdf | null;
   signature: SignatureForPdf;
+};
+
+type SignatureImageForPdf = {
+  buffer: Buffer;
+  height: number;
+  mimeType: "image/jpeg" | "image/png";
+  width: number;
 };
 
 type VerificationData = {
@@ -159,6 +166,8 @@ const PHOTO_COLUMNS = 2;
 const PHOTO_FIT: [number, number] = [220, 140];
 const PHOTO_LABEL_HEIGHT = 32;
 const PHOTO_PADDING = 7;
+const SIGNATURE_IMAGE_MAX_WIDTH = 190;
+const SIGNATURE_IMAGE_MAX_HEIGHT = 72;
 
 @Injectable()
 export class DailyLogPdfService {
@@ -707,30 +716,187 @@ async function buildDailyLogPhotoEvidence(events: EventForPdf[]) {
 async function buildSignatureSnapshots(signatures: SignatureForPdf[]) {
   return Promise.all(
     signatures.map(async (signature) => ({
-      imageBuffer: await normalizeSignatureImage(signature),
+      image: await normalizeSignatureImage(signature),
       signature,
     })),
   );
 }
 
-async function normalizeSignatureImage(signature: SignatureForPdf) {
+async function normalizeSignatureImage(
+  signature: SignatureForPdf,
+): Promise<SignatureImageForPdf | null> {
   if (!isPdfEmbeddableSignature(signature)) {
     return null;
   }
 
   try {
     await access(signature.signatureSnapshotPath, constants.R_OK);
-    return await readFile(signature.signatureSnapshotPath);
+    const buffer = await readFile(signature.signatureSnapshotPath);
+    const mimeType = normalizeSignatureMimeType(
+      signature.signatureSnapshotMimeType,
+    );
+
+    if (!mimeType || !isSignatureMagicBytesValid(buffer, mimeType)) {
+      return null;
+    }
+
+    const dimensions = getImageDimensions(buffer, mimeType);
+
+    if (!dimensions) {
+      return null;
+    }
+
+    return {
+      buffer,
+      height: dimensions.height,
+      mimeType,
+      width: dimensions.width,
+    };
   } catch {
     return null;
   }
 }
 
 function isPdfEmbeddableSignature(signature: SignatureForPdf) {
+  return Boolean(normalizeSignatureMimeType(signature.signatureSnapshotMimeType));
+}
+
+function normalizeSignatureMimeType(value: string | null | undefined) {
+  const normalized = value?.toLowerCase().trim();
+
+  if (normalized === "image/jpeg" || normalized === "image/jpg") {
+    return "image/jpeg";
+  }
+
+  if (normalized === "image/png") {
+    return "image/png";
+  }
+
+  return null;
+}
+
+function isSignatureMagicBytesValid(
+  buffer: Buffer,
+  mimeType: "image/jpeg" | "image/png",
+) {
+  if (mimeType === "image/png") {
+    return (
+      buffer.length > 24 &&
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47 &&
+      buffer[4] === 0x0d &&
+      buffer[5] === 0x0a &&
+      buffer[6] === 0x1a &&
+      buffer[7] === 0x0a
+    );
+  }
+
   return (
-    signature.signatureSnapshotMimeType === "image/jpeg" ||
-    signature.signatureSnapshotMimeType === "image/png"
+    buffer.length > 4 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[buffer.length - 2] === 0xff &&
+    buffer[buffer.length - 1] === 0xd9
   );
+}
+
+function getImageDimensions(
+  buffer: Buffer,
+  mimeType: "image/jpeg" | "image/png",
+) {
+  if (mimeType === "image/png") {
+    return getPngDimensions(buffer);
+  }
+
+  return getJpegDimensions(buffer);
+}
+
+function getPngDimensions(buffer: Buffer) {
+  if (!isSignatureMagicBytesValid(buffer, "image/png") || buffer.length < 24) {
+    return null;
+  }
+
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+
+  return isValidImageDimensions(width, height) ? { height, width } : null;
+}
+
+function getJpegDimensions(buffer: Buffer) {
+  if (!isSignatureMagicBytesValid(buffer, "image/jpeg")) {
+    return null;
+  }
+
+  let offset = 2;
+
+  while (offset < buffer.length - 9) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+
+    const marker = buffer[offset + 1];
+    const length = buffer.readUInt16BE(offset + 2);
+
+    if (length < 2) {
+      return null;
+    }
+
+    if (isJpegStartOfFrame(marker)) {
+      const height = buffer.readUInt16BE(offset + 5);
+      const width = buffer.readUInt16BE(offset + 7);
+
+      return isValidImageDimensions(width, height) ? { height, width } : null;
+    }
+
+    offset += 2 + length;
+  }
+
+  return null;
+}
+
+function isJpegStartOfFrame(marker: number) {
+  return (
+    marker === 0xc0 ||
+    marker === 0xc1 ||
+    marker === 0xc2 ||
+    marker === 0xc3 ||
+    marker === 0xc5 ||
+    marker === 0xc6 ||
+    marker === 0xc7 ||
+    marker === 0xc9 ||
+    marker === 0xca ||
+    marker === 0xcb ||
+    marker === 0xcd ||
+    marker === 0xce ||
+    marker === 0xcf
+  );
+}
+
+function isValidImageDimensions(width: number, height: number) {
+  return (
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width > 0 &&
+    height > 0 &&
+    width <= 10000 &&
+    height <= 10000
+  );
+}
+
+function fitImageWithinBox(
+  image: SignatureImageForPdf,
+  maxWidth: number,
+  maxHeight: number,
+) {
+  const ratio = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+
+  return {
+    height: image.height * ratio,
+    width: image.width * ratio,
+  };
 }
 
 function hasSignatureAfterSnapshot(
@@ -1140,8 +1306,8 @@ function buildWorkflowTransitionSummary(
     },
     rejected: {
       comments: rejected?.comments ?? null,
-      date: dailyLog.reviewedAt ?? rejected?.changedAt ?? null,
-      user: dailyLog.reviewedBy ?? rejected?.changedBy ?? null,
+      date: rejected?.changedAt ?? null,
+      user: rejected?.changedBy ?? null,
     },
     submitted: {
       comments: submitted?.comments ?? null,
@@ -1167,16 +1333,16 @@ function findLastTransition(
 
 function formatWorkflowAction(action: WorkflowActionSummary) {
   if (!action.date && !action.user && !action.comments) {
-    return "Pendiente";
+    return "No aplicado";
   }
 
   const details = [
-    action.user ? formatPerson(action.user) : "Pendiente",
+    action.user ? formatPerson(action.user) : "No aplicado",
     formatDateTime(action.date),
     action.comments ? `Motivo: ${sanitizeText(action.comments)}` : null,
   ].filter((value) => value && value !== "No disponible");
 
-  return details.join(" | ");
+  return details.length > 0 ? details.join(" | ") : "No aplicado";
 }
 
 function addDigitalRecordLegend(doc: PDFKit.PDFDocument) {
@@ -1263,13 +1429,13 @@ function addAppliedSignatureSection(
 
   const blocks = [
     {
-      emptyText: "Firma no registrada",
+      emptyText: "Firma no disponible",
       role: "Responsable",
       signature: getSignatureByType(signatures, DailyLogSignatureType.RESPONSIBLE),
       title: "Responsable",
     },
     {
-      emptyText: "Firma no registrada",
+      emptyText: "Firma no disponible",
       role: "Aprobador",
       signature: getSignatureByType(signatures, DailyLogSignatureType.APPROVER),
       title: "Aprobador",
@@ -1304,8 +1470,8 @@ function renderSignatureBlock(
   const width = contentWidth(doc);
   const imageX = x + 14;
   const imageY = y + 34;
-  const imageWidth = 180;
-  const imageHeight = 58;
+  const imageWidth = SIGNATURE_IMAGE_MAX_WIDTH;
+  const imageHeight = SIGNATURE_IMAGE_MAX_HEIGHT;
   const textX = imageX + imageWidth + 18;
   const textWidth = width - imageWidth - 46;
 
@@ -1323,10 +1489,22 @@ function renderSignatureBlock(
       width: width - 28,
     });
 
-  if (block.signature?.imageBuffer) {
+  if (block.signature?.image) {
     try {
-      doc.image(block.signature.imageBuffer, imageX, imageY, {
-        fit: [imageWidth, imageHeight],
+      const fitted = fitImageWithinBox(
+        block.signature.image,
+        imageWidth - 18,
+        imageHeight - 16,
+      );
+      const fittedX = imageX + (imageWidth - fitted.width) / 2;
+      const fittedY = imageY + (imageHeight - fitted.height) / 2;
+
+      doc
+        .roundedRect(imageX, imageY, imageWidth, imageHeight, 4)
+        .fillAndStroke("#ffffff", COLORS.softBorder);
+      doc.image(block.signature.image.buffer, fittedX, fittedY, {
+        height: fitted.height,
+        width: fitted.width,
       });
     } catch {
       addSignatureMissingText(doc, block.emptyText, imageX, imageY, imageWidth);
@@ -1346,7 +1524,7 @@ function renderSignatureBlock(
   addSignatureField(
     doc,
     "Nombre",
-    signer?.signerName ?? "Firma no registrada",
+    signer?.signerName ?? "Firma no disponible",
     textX,
     imageY,
     textWidth,
@@ -1362,7 +1540,7 @@ function renderSignatureBlock(
   addSignatureField(
     doc,
     "Fecha/hora",
-    signer ? formatDateTime(signer.signedAt) : "Firma no registrada",
+    signer ? formatDateTime(signer.signedAt) : "Firma no disponible",
     textX,
     imageY + 64,
     textWidth,
@@ -1379,13 +1557,13 @@ function addSignatureMissingText(
   width: number,
 ) {
   doc
-    .roundedRect(x, y, width, 58, 4)
+    .roundedRect(x, y, width, SIGNATURE_IMAGE_MAX_HEIGHT, 4)
     .fillAndStroke(COLORS.fill, COLORS.softBorder);
   doc
     .font("Helvetica")
     .fontSize(9)
     .fillColor(COLORS.muted)
-    .text(text, x + 8, y + 23, {
+    .text(text, x + 8, y + 30, {
       align: "center",
       width: width - 16,
     });

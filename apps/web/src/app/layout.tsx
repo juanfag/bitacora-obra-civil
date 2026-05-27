@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 const navigation = [
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/projects", label: "Proyectos" },
   { href: "/daily-logs", label: "Bitacoras" },
 ];
@@ -22,7 +23,7 @@ export default function RootLayout({
       <body>
         <div className="app-shell">
           <header className="topbar">
-            <Link href="/projects" className="brand">
+            <Link href="/dashboard" className="brand">
               Bitacora
             </Link>
             <nav className="nav" aria-label="Navegacion principal">

@@ -111,18 +111,15 @@ export default function DailyLogDetailPage() {
       setIsLoadingAudit(true);
 
       try {
-        const [signaturesResponse, userSignatureResponse, auditResponse] = await Promise.all([
+        const [signaturesResponse, userSignatureResponse] = await Promise.all([
           getDailyLogSignatures(params.id),
           getMySignature(),
-          getDailyLogAudit(params.id),
         ]);
         setDailyLogSignatures(signaturesResponse);
         setUserSignature(userSignatureResponse);
-        setAudit(auditResponse);
       } catch (caughtError) {
         setDailyLogSignatures([]);
         setUserSignature(null);
-        setAudit(null);
 
         if (caughtError instanceof ApiClientError && caughtError.status === 401) {
           handleUnauthorized();
@@ -130,9 +127,23 @@ export default function DailyLogDetailPage() {
         }
 
         setSignaturesError("No fue posible cargar las firmas digitales.");
-        setAuditError("No fue posible cargar la auditoría.");
       } finally {
         setIsLoadingSignatures(false);
+      }
+
+      try {
+        const auditResponse = await getDailyLogAudit(params.id);
+        setAudit(auditResponse);
+      } catch (caughtError) {
+        setAudit(null);
+
+        if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        setAuditError("No fue posible cargar la auditoría.");
+      } finally {
         setIsLoadingAudit(false);
       }
 
@@ -534,6 +545,7 @@ export default function DailyLogDetailPage() {
                 audit={audit}
                 error={auditError}
                 isLoading={isLoadingAudit}
+                onRetry={loadDailyLog}
               />
             </InfoCard>
 
@@ -696,8 +708,8 @@ function SignatureSnapshotCard({
   signer: MasterSignatureRole;
 }) {
   return (
-    <div className="panel">
-      <div className="status-row">
+    <div className="panel signature-card">
+      <div className="status-row signature-card-header">
         <div>
           <h3>{signer.title}</h3>
           <p className="muted">
@@ -743,7 +755,7 @@ function SignatureSnapshotCard({
       ) : (
         <div className="toolbar">
           <button
-            className="button"
+            className="button signature-action"
             disabled={!canSign || isSigning}
             onClick={onSign}
             type="button"
@@ -1006,26 +1018,93 @@ function AuditSection({
   audit,
   error,
   isLoading,
+  onRetry,
 }: {
   audit: DailyLogAuditResponse | null;
   error: string | null;
   isLoading: boolean;
+  onRetry: () => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedAction, setSelectedAction] = useState("ALL");
+  const [selectedEntity, setSelectedEntity] = useState("ALL");
+
   if (isLoading) {
-    return <p className="muted">Cargando auditoría...</p>;
+    return (
+      <div className="audit-state">
+        <span aria-hidden="true" className="audit-state-icon">
+          ...
+        </span>
+        <div>
+          <strong>Consultando trazabilidad</strong>
+          <p className="muted">Cargando la línea de tiempo de auditoría.</p>
+        </div>
+      </div>
+    );
   }
 
   if (error) {
-    return <p className="form-error">{error}</p>;
+    return (
+      <div className="audit-state audit-state-error">
+        <span aria-hidden="true" className="audit-state-icon">
+          !
+        </span>
+        <div>
+          <strong>No fue posible cargar la auditoría</strong>
+          <p className="muted">{error}</p>
+          <button className="button secondary" onClick={onRetry} type="button">
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (!audit || audit.items.length === 0) {
     return (
-      <div className="stack">
-        <p className="muted">Línea de tiempo de eventos de la bitácora.</p>
-        <p className="muted">Aún no hay eventos de auditoría registrados.</p>
+      <div className="audit-state">
+        <span aria-hidden="true" className="audit-state-icon">
+          0
+        </span>
+        <div>
+          <strong>Sin eventos de auditoría</strong>
+          <p className="muted">
+            Cuando existan cambios, firmas o snapshots documentales, aparecerán
+            aquí en orden cronológico.
+          </p>
+        </div>
       </div>
     );
+  }
+
+  const actionOptions = getUniqueAuditOptions(audit.items.map((item) => item.action));
+  const entityOptions = getUniqueAuditOptions(audit.items.map((item) => item.entity));
+  const normalizedSearch = normalizeAuditSearch(searchQuery);
+  const filteredItems = audit.items.filter((item) => {
+    const matchesAction =
+      selectedAction === "ALL" || item.action === selectedAction;
+    const matchesEntity =
+      selectedEntity === "ALL" || item.entity === selectedEntity;
+
+    if (!matchesAction || !matchesEntity) {
+      return false;
+    }
+
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return getAuditSearchText(item).includes(normalizedSearch);
+  });
+  const hasActiveFilters =
+    Boolean(normalizedSearch) ||
+    selectedAction !== "ALL" ||
+    selectedEntity !== "ALL";
+
+  function clearAuditFilters() {
+    setSearchQuery("");
+    setSelectedAction("ALL");
+    setSelectedEntity("ALL");
   }
 
   return (
@@ -1034,58 +1113,159 @@ function AuditSection({
       <div className="status-row">
         <span className="badge">Total: {audit.total}</span>
         <span className="badge">Orden: {audit.order}</span>
+        <span className="badge">
+          Mostrando {filteredItems.length} de {audit.items.length} eventos
+        </span>
       </div>
 
-      <div className="timeline">
-        {audit.items.map((item) => (
-          <div className="timeline-item" key={item.id}>
-            <span aria-hidden="true" className="timeline-marker" />
-            <article className="card timeline-card">
-              <div className="status-row">
-                <span className="badge">{formatAuditAction(item.action)}</span>
-                {isRelevantAuditAction(item.action) ? (
-                  <span className="badge">Relevante</span>
-                ) : null}
-                <span className="badge">{formatDateTime(item.createdAt)}</span>
-              </div>
-              <p>
-                <strong>Entidad:</strong> {item.entity}
-              </p>
-              <p>
-                <strong>Usuario:</strong>{" "}
-                {item.userId ? formatTechnicalId(item.userId) : "No disponible"}
-              </p>
-              <AuditValueSummary label="Antes" value={item.oldValue} />
-              <AuditValueSummary label="Después" value={item.newValue} />
-            </article>
-          </div>
-        ))}
+      <div className="audit-filters" aria-label="Filtros de auditoría">
+        <label>
+          <span>Buscar</span>
+          <input
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Buscar en auditoría..."
+            type="search"
+            value={searchQuery}
+          />
+        </label>
+        <label>
+          <span>Acción</span>
+          <select
+            onChange={(event) => setSelectedAction(event.target.value)}
+            value={selectedAction}
+          >
+            <option value="ALL">Todas las acciones</option>
+            {actionOptions.map((action) => (
+              <option key={action} value={action}>
+                {formatAuditAction(action)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Entidad</span>
+          <select
+            onChange={(event) => setSelectedEntity(event.target.value)}
+            value={selectedEntity}
+          >
+            <option value="ALL">Todas las entidades</option>
+            {entityOptions.map((entity) => (
+              <option key={entity} value={entity}>
+                {entity}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="button secondary audit-clear-filters"
+          disabled={!hasActiveFilters}
+          onClick={clearAuditFilters}
+          type="button"
+        >
+          Limpiar filtros
+        </button>
       </div>
+
+      {filteredItems.length === 0 ? (
+        <div className="audit-state">
+          <span aria-hidden="true" className="audit-state-icon">
+            0
+          </span>
+          <div>
+            <strong>Sin coincidencias</strong>
+            <p className="muted">
+              No hay eventos que coincidan con los filtros aplicados.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      {filteredItems.length > 0 ? (
+        <div className="timeline">
+          {filteredItems.map((item) => (
+            <AuditTimelineItem item={item} key={item.id} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AuditTimelineItem({
+  item,
+}: {
+  item: DailyLogAuditResponse["items"][number];
+}) {
+  const oldSummary = summarizeAuditValue(item.oldValue);
+  const newSummary = summarizeAuditValue(item.newValue);
+  const hasChangeSummary = Boolean(oldSummary || newSummary);
+
+  return (
+    <div className="timeline-item audit-timeline-item">
+      <span
+        aria-hidden="true"
+        className={`timeline-marker audit-marker audit-marker-${getAuditActionTone(
+          item.action,
+        )}`}
+      >
+        {getAuditActionIcon(item.action)}
+      </span>
+      <article className="card timeline-card audit-card">
+        <div className="audit-card-header">
+          <div>
+            <div className="status-row audit-badges">
+              <span className={`badge audit-badge audit-badge-${getAuditActionTone(item.action)}`}>
+                {formatAuditAction(item.action)}
+              </span>
+              {isRelevantAuditAction(item.action) ? (
+                <span className="badge audit-badge audit-badge-muted">
+                  Relevante
+                </span>
+              ) : null}
+            </div>
+            <p className="audit-date">{formatDateTime(item.createdAt)}</p>
+          </div>
+          <span className="audit-entity">{item.entity}</span>
+        </div>
+
+        <div className="audit-meta-grid">
+          <p>
+            <strong>Usuario</strong>
+            <span>{formatAuditActor(item)}</span>
+          </p>
+          <p>
+            <strong>Entidad</strong>
+            <span>{item.entity}</span>
+          </p>
+        </div>
+
+        {hasChangeSummary ? (
+          <div className="audit-change-grid">
+            {oldSummary ? (
+              <AuditValueSummary label="Antes" summary={oldSummary} />
+            ) : null}
+            {newSummary ? (
+              <AuditValueSummary label="Después" summary={newSummary} />
+            ) : null}
+          </div>
+        ) : null}
+      </article>
     </div>
   );
 }
 
 function AuditValueSummary({
   label,
-  value,
+  summary,
 }: {
   label: string;
-  value: unknown;
+  summary: string;
 }) {
-  const summary = summarizeAuditValue(value);
-
-  if (!summary) {
-    return (
-      <p className="muted">
-        <strong>{label}:</strong> Sin datos.
-      </p>
-    );
-  }
-
   return (
-    <p className="muted">
-      <strong>{label}:</strong> {summary}
-    </p>
+    <div className="audit-change">
+      <strong>{label}</strong>
+      <span>{summary}</span>
+    </div>
   );
 }
 
@@ -1331,6 +1511,110 @@ function formatAuditAction(action: string) {
   return labels[action] ?? action;
 }
 
+function getAuditActionIcon(action: string) {
+  if (action.includes("SIGNATURE")) {
+    return "S";
+  }
+
+  if (action.includes("PDF") || action.includes("SNAPSHOT")) {
+    return "PDF";
+  }
+
+  const icons: Record<string, string> = {
+    APPROVE: "OK",
+    CLOSE: "CL",
+    CREATE: "+",
+    DELETE: "-",
+    REJECT: "RJ",
+    SUBMIT: "SR",
+    UPDATE: "UP",
+    VOID: "AN",
+  };
+
+  return icons[action] ?? "EV";
+}
+
+function getAuditActionTone(action: string) {
+  if (action.includes("SIGNATURE")) {
+    return "sign";
+  }
+
+  if (action.includes("PDF") || action.includes("SNAPSHOT")) {
+    return "pdf";
+  }
+
+  const tones: Record<string, string> = {
+    APPROVE: "success",
+    CLOSE: "closed",
+    CREATE: "create",
+    DELETE: "danger",
+    REJECT: "danger",
+    SUBMIT: "review",
+    UPDATE: "update",
+    VOID: "danger",
+  };
+
+  return tones[action] ?? "default";
+}
+
+function formatAuditActor(item: DailyLogAuditResponse["items"][number]) {
+  const signerName = getAuditPrimitive(item.newValue, "signerName");
+  const signerEmail = getAuditPrimitive(item.newValue, "signerEmail");
+
+  if (signerName && signerEmail) {
+    return `${signerName} (${signerEmail})`;
+  }
+
+  if (signerName) {
+    return signerName;
+  }
+
+  if (!item.userId) {
+    return "Sistema";
+  }
+
+  return "Usuario registrado";
+}
+
+function getAuditPrimitive(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const item = (value as Record<string, unknown>)[key];
+
+  if (typeof item !== "string" || isSensitiveAuditText(item)) {
+    return null;
+  }
+
+  return item;
+}
+
+function getUniqueAuditOptions(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort((first, second) =>
+    formatAuditAction(first).localeCompare(formatAuditAction(second), "es"),
+  );
+}
+
+function normalizeAuditSearch(value: string) {
+  return value.trim().toLocaleLowerCase("es-CO");
+}
+
+function getAuditSearchText(item: DailyLogAuditResponse["items"][number]) {
+  return normalizeAuditSearch(
+    [
+      item.action,
+      formatAuditAction(item.action),
+      item.entity,
+      formatAuditActor(item),
+      summarizeAuditValue(item.oldValue),
+      summarizeAuditValue(item.newValue),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
 function isRelevantAuditAction(action: string) {
   return (
     action === "DAILY_LOG_SIGNATURE_APPLIED" ||
@@ -1415,6 +1699,8 @@ function isSensitiveAuditKey(key: string) {
     normalized.includes("checksum") ||
     normalized.includes("fileurl") ||
     normalized.includes("hash") ||
+    normalized === "id" ||
+    normalized.endsWith("id") ||
     normalized.includes("path") ||
     normalized.includes("snapshotpath") ||
     normalized.includes("storagepath")
