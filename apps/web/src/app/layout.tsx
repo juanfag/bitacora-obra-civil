@@ -5,7 +5,7 @@ import "./globals.css";
 const navigation = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/projects", label: "Proyectos" },
-  { href: "/daily-logs", label: "Bitacoras" },
+  { href: "/daily-logs", label: "Bitácoras" },
   { href: "/users", label: "Usuarios" },
 ];
 

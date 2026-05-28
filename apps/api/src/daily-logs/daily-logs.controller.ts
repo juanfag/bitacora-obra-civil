@@ -65,8 +65,11 @@ export class DailyLogsController {
   @ApiOkResponse({ description: "Daily logs returned with pagination metadata." })
   @ApiBadRequestResponse({ description: "Invalid query parameters." })
   @Permissions("daily-logs:read")
-  findAll(@Query() query: FindDailyLogsQueryDto) {
-    return this.dailyLogsService.findAll(query);
+  findAll(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query() query: FindDailyLogsQueryDto,
+  ) {
+    return this.dailyLogsService.findAll(query, user.sub);
   }
 
   @Get("daily-logs/:id/pdf")
@@ -192,8 +195,8 @@ export class DailyLogsController {
   @ApiOkResponse({ description: "Daily log returned." })
   @ApiNotFoundResponse({ description: "Daily log not found." })
   @Permissions("daily-logs:read")
-  findOne(@Param("id") id: string) {
-    return this.dailyLogsService.findOne(id);
+  findOne(@Param("id") id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.dailyLogsService.findOne(id, user.sub);
   }
 
   @Get("projects/:projectId/daily-logs")
@@ -204,9 +207,10 @@ export class DailyLogsController {
   @Permissions("daily-logs:read")
   findByProject(
     @Param("projectId") projectId: string,
+    @CurrentUser() user: CurrentUserPayload,
     @Query() query: FindDailyLogsQueryDto,
   ) {
-    return this.dailyLogsService.findByProject(projectId, query);
+    return this.dailyLogsService.findByProject(projectId, query, user.sub);
   }
 
   @Post("daily-logs")

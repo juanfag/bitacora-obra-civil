@@ -19,6 +19,10 @@ import {
 import { RecordStatus } from "@prisma/client";
 import { AuditRequestContext } from "../audit/audit.types";
 import { AuditContext } from "../audit/decorators/audit-context.decorator";
+import {
+  CurrentUser,
+  CurrentUserPayload,
+} from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -40,19 +44,20 @@ export class OrganizationsController {
   @ApiQuery({ name: "name", required: false })
   @Permissions("organizations:read")
   findAll(
+    @CurrentUser() user: CurrentUserPayload,
     @Query("status") status?: RecordStatus,
     @Query("nit") nit?: string,
     @Query("name") name?: string,
   ) {
-    return this.organizationsService.findAll({ status, nit, name });
+    return this.organizationsService.findAll({ status, nit, name }, user.sub);
   }
 
   @Get(":id")
   @ApiOperation({ summary: "Get organization by id" })
   @ApiParam({ name: "id", description: "Organization UUID" })
   @Permissions("organizations:read")
-  findOne(@Param("id") id: string) {
-    return this.organizationsService.findOne(id);
+  findOne(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.organizationsService.findOne(id, user.sub);
   }
 
   @Post()

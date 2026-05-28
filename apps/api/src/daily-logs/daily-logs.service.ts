@@ -27,11 +27,40 @@ export class DailyLogsService {
     private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
-  async findAll(query: FindDailyLogsQueryDto) {
+  async findAll(query: FindDailyLogsQueryDto, currentUserId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      return {
+        items: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
+    if (
+      query.projectId &&
+      accessibleProjectIds &&
+      !accessibleProjectIds.includes(query.projectId)
+    ) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
+
     const where: Prisma.DailyLogWhereInput = {
-      projectId: query.projectId,
+      projectId: query.projectId
+        ? query.projectId
+        : accessibleProjectIds
+          ? {
+              in: accessibleProjectIds,
+            }
+          : undefined,
       logDate: query.logDate ? this.toDate(query.logDate) : undefined,
       status: query.status ?? {
         not: DailyLogStatus.VOIDED,
@@ -61,16 +90,21 @@ export class DailyLogsService {
     };
   }
 
-  async findByProject(projectId: string, query: FindDailyLogsQueryDto) {
+  async findByProject(
+    projectId: string,
+    query: FindDailyLogsQueryDto,
+    currentUserId: string,
+  ) {
     await this.ensureProjectExists(projectId);
+    await this.ensureUserCanAccessProject(currentUserId, projectId);
 
     return this.findAll({
       ...query,
       projectId,
-    });
+    }, currentUserId);
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
     const dailyLog = await this.prisma.dailyLog.findFirst({
       where: {
         id,
@@ -84,6 +118,8 @@ export class DailyLogsService {
       throw new NotFoundException("Daily log not found");
     }
 
+    await this.ensureUserCanAccessProject(currentUserId, dailyLog.projectId);
+
     return dailyLog;
   }
 
@@ -92,6 +128,12 @@ export class DailyLogsService {
     audit: AuditRequestContext,
   ) {
     await this.ensureProjectExists(createDailyLogDto.projectId);
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(
+        audit.actorId,
+        createDailyLogDto.projectId,
+      );
+    }
     const logDate = this.toDate(createDailyLogDto.logDate);
     const existingDailyLog = await this.findDailyLogByProjectAndDate(
       createDailyLogDto.projectId,
@@ -147,11 +189,19 @@ export class DailyLogsService {
     updateDailyLogDto: UpdateDailyLogDto,
     audit: AuditRequestContext,
   ) {
-    const currentDailyLog = await this.findOne(id);
+    if (!audit.actorId) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
+
+    const currentDailyLog = await this.findOne(id, audit.actorId);
     this.ensureDailyLogCanBeEdited(currentDailyLog);
 
     if (updateDailyLogDto.projectId) {
       await this.ensureProjectExists(updateDailyLogDto.projectId);
+      await this.ensureUserCanAccessProject(
+        audit.actorId,
+        updateDailyLogDto.projectId,
+      );
     }
 
     try {
@@ -282,6 +332,17 @@ export class DailyLogsService {
 
     if (!project) {
       throw new BadRequestException("Invalid projectId reference");
+    }
+  }
+
+  private async ensureUserCanAccessProject(userId: string, projectId: string) {
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      userId,
+      projectId,
+    );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
     }
   }
 

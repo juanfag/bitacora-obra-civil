@@ -8,6 +8,7 @@ import { Prisma, RecordStatus } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { CreateOrganizationDto } from "./dto/create-organization.dto";
 import { UpdateOrganizationDto } from "./dto/update-organization.dto";
 
@@ -22,14 +23,30 @@ export class OrganizationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
-  async findAll(filters: OrganizationFilters) {
+  async findAll(filters: OrganizationFilters, currentUserId: string) {
     this.validateStatus(filters.status);
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      return [];
+    }
 
     return this.prisma.organization.findMany({
       where: {
         status: filters.status,
+        projects: accessibleProjectIds
+          ? {
+              some: {
+                id: {
+                  in: accessibleProjectIds,
+                },
+              },
+            }
+          : undefined,
         nit: filters.nit
           ? {
               contains: filters.nit,
@@ -49,9 +66,27 @@ export class OrganizationsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      throw new NotFoundException("Organizacion no encontrada");
+    }
+
     const organization = await this.prisma.organization.findUnique({
-      where: { id },
+      where: {
+        id,
+        projects: accessibleProjectIds
+          ? {
+              some: {
+                id: {
+                  in: accessibleProjectIds,
+                },
+              },
+            }
+          : undefined,
+      },
     });
 
     if (!organization) {

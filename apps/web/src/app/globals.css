@@ -777,6 +777,33 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.users-admin-form {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.users-admin-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.users-admin-form label span {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.users-admin-form select {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
 .role-assignment-list {
   display: grid;
   gap: 10px;

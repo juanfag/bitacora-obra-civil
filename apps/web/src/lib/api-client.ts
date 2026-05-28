@@ -1,4 +1,4 @@
-import { Attachment } from "@/types/attachment";
+﻿import { Attachment } from "@/types/attachment";
 import { EventType } from "@/types/event-type";
 
 export type ApiClientOptions = {
@@ -124,12 +124,25 @@ export type UserRead = {
   email: string;
   status: string;
   isActive: boolean;
+  tokenVersion: number;
   roles: UserRole[];
   organization: UserOrganization | null;
   organizations: UserOrganization[];
   projects: UserProject[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type ProjectSummary = {
+  id: string;
+  organizationId: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  location?: string | null;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type UsersReadResponse = {
@@ -262,6 +275,20 @@ export function getUser(userId: string) {
   return apiRequest<UserRead>(`/users/${encodeURIComponent(userId)}`);
 }
 
+export function getProjects(params: { status?: string } = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (params.status) {
+    searchParams.set("status", params.status);
+  }
+
+  const query = searchParams.toString();
+
+  return apiRequest<ProjectSummary[]>(
+    `/projects${query ? `?${query}` : ""}`,
+  );
+}
+
 export function updateUserRoles(
   userId: string,
   assignments: UserRoleAssignmentInput[],
@@ -270,6 +297,15 @@ export function updateUserRoles(
     method: "PATCH",
     body: JSON.stringify({ assignments }),
   });
+}
+
+export function invalidateUserSessions(userId: string) {
+  return apiRequest<UserRead>(
+    `/users/${encodeURIComponent(userId)}/invalidate-sessions`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function getAssignableRoles() {

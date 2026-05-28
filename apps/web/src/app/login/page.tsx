@@ -37,8 +37,8 @@ export default function LoginPage() {
     <section>
       <div className="page-header">
         <div>
-          <p className="eyebrow">Autenticacion</p>
-          <h1>Iniciar sesion</h1>
+          <p className="eyebrow">Autenticación</p>
+          <h1>Iniciar sesión</h1>
           <p className="muted">
             Ingresa con tus credenciales para continuar.
           </p>
@@ -59,7 +59,7 @@ export default function LoginPage() {
           />
         </div>
         <div className="field">
-          <label htmlFor="password">Contrasena</label>
+          <label htmlFor="password">Contraseña</label>
           <input
             autoComplete="current-password"
             id="password"
@@ -72,7 +72,7 @@ export default function LoginPage() {
         </div>
         {error ? <p className="form-error">{error}</p> : null}
         <button disabled={isSubmitting} type="submit">
-          {isSubmitting ? "Cargando..." : "Iniciar sesion"}
+          {isSubmitting ? "Cargando..." : "Iniciar sesión"}
         </button>
       </form>
     </section>

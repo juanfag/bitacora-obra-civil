@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { Prisma, RecordStatus, UserStatus } from "@prisma/client";
 import * as bcrypt from "bcrypt";
@@ -40,10 +41,32 @@ type NormalizedRoleAssignment = {
   roleId: string;
 };
 
+type ExistingRoleAssignment = {
+  id: string;
+  projectId: string;
+  roleId: string;
+  status: RecordStatus;
+};
+
+type AdminRoleRemovalCandidate = ExistingRoleAssignment & {
+  role: {
+    code: string;
+  };
+  project: {
+    organizationId: string;
+  };
+};
+
 const ADMIN_PERMISSION_CODES = [
   "users:manage",
   "organizations:create",
   "organizations:update",
+] satisfies string[];
+
+const ADMIN_ROLE_CODES = [
+  "SUPER_ADMIN",
+  "ORG_ADMIN",
+  "PROJECT_ADMIN",
 ] satisfies string[];
 
 const userSelect = {
@@ -63,6 +86,7 @@ const userReadSelect = {
   fullName: true,
   email: true,
   status: true,
+  tokenVersion: true,
   createdAt: true,
   updatedAt: true,
   projectAssignments: {
@@ -256,10 +280,43 @@ export class UsersService {
       );
     }
 
+    const desiredKeys = new Set(
+      assignments.map((assignment) => assignmentKey(assignment)),
+    );
+    const removableAssignments = await this.prisma.projectUser.findMany({
+      where: {
+        userId: targetUserId,
+        status: RecordStatus.ACTIVE,
+        projectId: accessibleProjectIds
+          ? {
+              in: accessibleProjectIds,
+            }
+          : undefined,
+      },
+      select: {
+        id: true,
+        projectId: true,
+        roleId: true,
+        status: true,
+        role: {
+          select: {
+            code: true,
+          },
+        },
+        project: {
+          select: {
+            organizationId: true,
+          },
+        },
+      },
+    });
+    const removedAdminAssignments = removableAssignments
+      .filter((assignment) => !desiredKeys.has(assignmentKey(assignment)))
+      .filter((assignment) => isAdminRoleCode(assignment.role.code));
+
+    await this.ensureRoleRemovalsKeepAdminCoverage(removedAdminAssignments);
+
     await this.prisma.$transaction(async (tx) => {
-      const desiredKeys = new Set(
-        assignments.map((assignment) => assignmentKey(assignment)),
-      );
       const existingAssignments = await tx.projectUser.findMany({
         where: {
           userId: targetUserId,
@@ -350,11 +407,16 @@ export class UsersService {
     actorUserId: string,
     audit: AuditRequestContext,
   ): Promise<UserReadDto> {
-    if (targetUserId === actorUserId) {
-      throw new ConflictException("No puede cambiar su propio estado.");
-    }
-
     this.validateStatus(updateUserStatusDto.status);
+
+    const actorUser = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { id: true },
+    });
+
+    if (!actorUser) {
+      throw new UnauthorizedException("Usuario autenticado no encontrado.");
+    }
 
     const accessibleProjectIds =
       await this.projectAccessPolicy.getAccessibleProjectIds(actorUserId);
@@ -369,6 +431,131 @@ export class UsersService {
         id: true,
         status: true,
         blockedReason: true,
+        tokenVersion: true,
+        projectAssignments: {
+          where: {
+            status: RecordStatus.ACTIVE,
+            projectId: accessibleProjectIds
+              ? {
+                  in: accessibleProjectIds,
+                }
+              : undefined,
+          },
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    if (
+      targetUserId === actorUserId &&
+      isNonActiveUserStatus(updateUserStatusDto.status)
+    ) {
+      throw new ConflictException("No puedes desactivar tu propio usuario.");
+    }
+
+    if (accessibleProjectIds && targetUser.projectAssignments.length === 0) {
+      throw new ForbiddenException("No puede administrar este usuario.");
+    }
+
+    if (targetUser.status === updateUserStatusDto.status) {
+      return this.findOne(targetUserId, actorUserId);
+    }
+
+    if (
+      targetUser.status === UserStatus.ACTIVE &&
+      isNonActiveUserStatus(updateUserStatusDto.status)
+    ) {
+      await this.ensureNotLastActiveSuperAdmin(targetUserId);
+      await this.ensureNotLastActiveOrganizationAdmin(targetUserId);
+      await this.ensureNotLastActiveAdminByRoleCode(targetUserId);
+    }
+
+    const shouldInvalidateSessions =
+      targetUser.status === UserStatus.ACTIVE &&
+      isNonActiveUserStatus(updateUserStatusDto.status);
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        status: updateUserStatusDto.status,
+        statusChangedAt: new Date(),
+        statusChangedById: actorUserId,
+        blockedReason:
+          updateUserStatusDto.status === UserStatus.BLOCKED
+            ? updateUserStatusDto.reason ?? null
+            : null,
+        tokenVersion: shouldInvalidateSessions
+          ? {
+              increment: 1,
+            }
+          : undefined,
+      },
+      select: {
+        id: true,
+        status: true,
+        blockedReason: true,
+        statusChangedAt: true,
+        statusChangedById: true,
+        tokenVersion: true,
+      },
+    });
+
+    if (shouldInvalidateSessions) {
+      await this.auditService.record({
+        ...audit,
+        action: "UPDATE",
+        entity: "User",
+        entityId: targetUserId,
+        oldValue: {
+          status: targetUser.status,
+          isActive: targetUser.status === UserStatus.ACTIVE,
+          tokenVersion: targetUser.tokenVersion,
+        },
+        newValue: {
+          status: updatedUser.status,
+          isActive: updatedUser.status === UserStatus.ACTIVE,
+          tokenVersion: updatedUser.tokenVersion,
+          sessionsInvalidated: true,
+          reason: "USER_DEACTIVATED",
+        },
+      });
+    }
+
+    return this.findOne(targetUserId, actorUserId);
+  }
+
+  async invalidateSessions(
+    targetUserId: string,
+    actorUserId: string,
+    audit: AuditRequestContext,
+  ): Promise<UserReadDto> {
+    const actorUser = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { id: true },
+    });
+
+    if (!actorUser) {
+      throw new UnauthorizedException("Usuario autenticado no encontrado.");
+    }
+
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(actorUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      throw new ForbiddenException("No tiene proyectos disponibles.");
+    }
+
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        tokenVersion: true,
         projectAssignments: {
           where: {
             status: RecordStatus.ACTIVE,
@@ -393,34 +580,15 @@ export class UsersService {
       throw new ForbiddenException("No puede administrar este usuario.");
     }
 
-    if (
-      targetUser.status === UserStatus.ACTIVE &&
-      isNonActiveUserStatus(updateUserStatusDto.status)
-    ) {
-      await this.ensureNotLastActiveSuperAdmin(targetUserId);
-      await this.ensureNotLastActiveOrganizationAdmin(targetUserId);
-    }
-
     const updatedUser = await this.prisma.user.update({
       where: { id: targetUserId },
       data: {
-        status: updateUserStatusDto.status,
-        statusChangedAt: new Date(),
-        statusChangedById: actorUserId,
-        blockedReason:
-          updateUserStatusDto.status === UserStatus.BLOCKED
-            ? updateUserStatusDto.reason ?? null
-            : null,
         tokenVersion: {
           increment: 1,
         },
       },
       select: {
         id: true,
-        status: true,
-        blockedReason: true,
-        statusChangedAt: true,
-        statusChangedById: true,
         tokenVersion: true,
       },
     });
@@ -431,15 +599,11 @@ export class UsersService {
       entity: "User",
       entityId: targetUserId,
       oldValue: {
-        status: targetUser.status,
-        blockedReason: targetUser.blockedReason,
+        tokenVersion: targetUser.tokenVersion,
       },
       newValue: {
-        status: updatedUser.status,
-        blockedReason: updatedUser.blockedReason,
-        statusChangedAt: updatedUser.statusChangedAt,
-        statusChangedById: updatedUser.statusChangedById,
         tokenVersion: updatedUser.tokenVersion,
+        sessionsInvalidated: true,
       },
     });
 
@@ -757,7 +921,7 @@ export class UsersService {
     });
 
     if (roles.length !== roleIds.length) {
-      throw new BadRequestException("Uno o mas roles no existen o estan inactivos.");
+      throw new NotFoundException("Uno o mas roles no existen o estan inactivos.");
     }
 
     const actorPermissions = await this.getUserPermissionCodes(actorUserId);
@@ -980,6 +1144,240 @@ export class UsersService {
         );
       }
     }
+  }
+
+  private async ensureNotLastActiveAdminByRoleCode(targetUserId: string) {
+    const targetAdminAssignments = await this.prisma.projectUser.findMany({
+      where: {
+        userId: targetUserId,
+        status: RecordStatus.ACTIVE,
+        role: {
+          code: {
+            in: [...ADMIN_ROLE_CODES],
+          },
+          status: RecordStatus.ACTIVE,
+        },
+      },
+      select: {
+        projectId: true,
+        role: {
+          select: {
+            code: true,
+          },
+        },
+        project: {
+          select: {
+            organizationId: true,
+          },
+        },
+      },
+    });
+
+    if (targetAdminAssignments.length === 0) {
+      return;
+    }
+
+    if (
+      targetAdminAssignments.some(
+        (assignment) => assignment.role.code === "SUPER_ADMIN",
+      )
+    ) {
+      const otherSuperAdmins = await this.countOtherActiveAdmins(targetUserId, {
+        roleCodes: ["SUPER_ADMIN"],
+      });
+
+      if (otherSuperAdmins === 0) {
+        throw new ConflictException(
+          "No puede desactivar o bloquear el ultimo SUPER_ADMIN activo.",
+        );
+      }
+    }
+
+    const organizationIds = [
+      ...new Set(
+        targetAdminAssignments
+          .filter((assignment) => assignment.role.code === "ORG_ADMIN")
+          .map((assignment) => assignment.project.organizationId),
+      ),
+    ];
+
+    for (const organizationId of organizationIds) {
+      const otherOrganizationAdmins = await this.countOtherActiveAdmins(
+        targetUserId,
+        {
+          organizationId,
+          roleCodes: [...ADMIN_ROLE_CODES],
+        },
+      );
+
+      if (otherOrganizationAdmins === 0) {
+        throw new ConflictException(
+          "No puede desactivar o bloquear el ultimo administrador activo de la organizacion.",
+        );
+      }
+    }
+
+    const projectIds = [
+      ...new Set(
+        targetAdminAssignments
+          .filter((assignment) => assignment.role.code === "PROJECT_ADMIN")
+          .map((assignment) => assignment.projectId),
+      ),
+    ];
+
+    for (const projectId of projectIds) {
+      const otherProjectAdmins = await this.countOtherActiveAdmins(
+        targetUserId,
+        {
+          projectId,
+          roleCodes: [...ADMIN_ROLE_CODES],
+        },
+      );
+
+      if (otherProjectAdmins === 0) {
+        throw new ConflictException(
+          "No puede desactivar o bloquear el ultimo administrador activo del proyecto.",
+        );
+      }
+    }
+  }
+
+  private countOtherActiveAdmins(
+    targetUserId: string,
+    filters: {
+      organizationId?: string;
+      projectId?: string;
+      roleCodes: string[];
+    },
+  ) {
+    return this.prisma.user.count({
+      where: {
+        id: {
+          not: targetUserId,
+        },
+        status: UserStatus.ACTIVE,
+        projectAssignments: {
+          some: {
+            status: RecordStatus.ACTIVE,
+            projectId: filters.projectId,
+            project: filters.organizationId
+              ? {
+                  organizationId: filters.organizationId,
+                }
+              : undefined,
+            role: {
+              code: {
+                in: filters.roleCodes,
+              },
+              status: RecordStatus.ACTIVE,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  private async ensureRoleRemovalsKeepAdminCoverage(
+    removedAssignments: AdminRoleRemovalCandidate[],
+  ) {
+    if (removedAssignments.length === 0) {
+      return;
+    }
+
+    const removedAssignmentIds = removedAssignments.map(({ id }) => id);
+
+    if (
+      removedAssignments.some(
+        (assignment) => assignment.role.code === "SUPER_ADMIN",
+      )
+    ) {
+      const remainingSuperAdmins = await this.countActiveAdminAssignments({
+        excludedAssignmentIds: removedAssignmentIds,
+        roleCodes: ["SUPER_ADMIN"],
+      });
+
+      if (remainingSuperAdmins === 0) {
+        throw new ConflictException(
+          "No puedes remover el ultimo rol administrativo activo de este alcance.",
+        );
+      }
+    }
+
+    const organizationIds = [
+      ...new Set(
+        removedAssignments
+          .filter((assignment) => assignment.role.code === "ORG_ADMIN")
+          .map((assignment) => assignment.project.organizationId),
+      ),
+    ];
+
+    for (const organizationId of organizationIds) {
+      const remainingOrganizationAdmins =
+        await this.countActiveAdminAssignments({
+          excludedAssignmentIds: removedAssignmentIds,
+          organizationId,
+          roleCodes: ["ORG_ADMIN"],
+        });
+
+      if (remainingOrganizationAdmins === 0) {
+        throw new ConflictException(
+          "No puedes remover el ultimo rol administrativo activo de este alcance.",
+        );
+      }
+    }
+
+    const projectIds = [
+      ...new Set(
+        removedAssignments
+          .filter((assignment) => assignment.role.code === "PROJECT_ADMIN")
+          .map((assignment) => assignment.projectId),
+      ),
+    ];
+
+    for (const projectId of projectIds) {
+      const remainingProjectAdmins = await this.countActiveAdminAssignments({
+        excludedAssignmentIds: removedAssignmentIds,
+        projectId,
+        roleCodes: ["PROJECT_ADMIN"],
+      });
+
+      if (remainingProjectAdmins === 0) {
+        throw new ConflictException(
+          "No puedes remover el ultimo rol administrativo activo de este alcance.",
+        );
+      }
+    }
+  }
+
+  private countActiveAdminAssignments(filters: {
+    excludedAssignmentIds: string[];
+    organizationId?: string;
+    projectId?: string;
+    roleCodes: string[];
+  }) {
+    return this.prisma.projectUser.count({
+      where: {
+        id: {
+          notIn: filters.excludedAssignmentIds,
+        },
+        status: RecordStatus.ACTIVE,
+        user: {
+          status: UserStatus.ACTIVE,
+        },
+        projectId: filters.projectId,
+        project: filters.organizationId
+          ? {
+              organizationId: filters.organizationId,
+            }
+          : undefined,
+        role: {
+          code: {
+            in: filters.roleCodes,
+          },
+          status: RecordStatus.ACTIVE,
+        },
+      },
+    });
   }
 
   private async findUserRoleAssignments(
@@ -1241,6 +1639,12 @@ function roleHasAdminPermission(role: {
   );
 }
 
+function isAdminRoleCode(roleCode: string) {
+  return ADMIN_ROLE_CODES.includes(
+    roleCode as (typeof ADMIN_ROLE_CODES)[number],
+  );
+}
+
 function isNonActiveUserStatus(status: UserStatus) {
   return status !== UserStatus.ACTIVE;
 }
@@ -1289,6 +1693,7 @@ function toUserReadDto(user: UserReadRecord): UserReadDto {
     email: user.email,
     status: user.status,
     isActive: user.status === UserStatus.ACTIVE,
+    tokenVersion: user.tokenVersion,
     roles: [...roleByKey.values()],
     organization: organizations[0] ?? null,
     organizations,

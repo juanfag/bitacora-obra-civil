@@ -2,15 +2,18 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import {
   AssignableRole,
   ApiClientError,
-  UserRead,
+  ProjectSummary,
   UserProject,
+  UserRead,
   getAssignableRoles,
+  getProjects,
   getUser,
+  invalidateUserSessions,
   updateUserRoles,
 } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
@@ -20,17 +23,28 @@ export default function UserDetailPage() {
   const router = useRouter();
   const [user, setUser] = useState<UserRead | null>(null);
   const [assignableRoles, setAssignableRoles] = useState<AssignableRole[]>([]);
+  const [assignableProjects, setAssignableProjects] = useState<ProjectSummary[]>(
+    [],
+  );
   const [selectedRoleKeys, setSelectedRoleKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedProjectRoleId, setSelectedProjectRoleId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [rolesCatalogError, setRolesCatalogError] = useState<string | null>(null);
   const [rolesError, setRolesError] = useState<string | null>(null);
   const [rolesSuccess, setRolesSuccess] = useState<string | null>(null);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [projectsSuccess, setProjectsSuccess] = useState<string | null>(null);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionsSuccess, setSessionsSuccess] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingRolesCatalog, setIsLoadingRolesCatalog] = useState(false);
-  const [canEditRoles, setCanEditRoles] = useState(false);
+  const [isLoadingAdminCatalogs, setIsLoadingAdminCatalogs] = useState(false);
+  const [canAdministerUser, setCanAdministerUser] = useState(false);
   const [isSavingRoles, setIsSavingRoles] = useState(false);
+  const [isSavingProjects, setIsSavingProjects] = useState(false);
+  const [isInvalidatingSessions, setIsInvalidatingSessions] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -47,8 +61,12 @@ export default function UserDetailPage() {
       setRolesCatalogError(null);
       setRolesError(null);
       setRolesSuccess(null);
-      setCanEditRoles(false);
-      setIsLoadingRolesCatalog(false);
+      setProjectsError(null);
+      setProjectsSuccess(null);
+      setSessionsError(null);
+      setSessionsSuccess(null);
+      setCanAdministerUser(false);
+      setIsLoadingAdminCatalogs(false);
 
       try {
         const userResponse = await getUser(params.id);
@@ -57,17 +75,23 @@ export default function UserDetailPage() {
           setUser(userResponse);
           setSelectedRoleKeys(new Set(userResponse.roles.map(getRoleKey)));
           setAssignableRoles([]);
-          setRolesCatalogError(null);
-          setCanEditRoles(false);
-          setIsLoadingRolesCatalog(true);
+          setAssignableProjects([]);
+          setSelectedProjectId("");
+          setSelectedProjectRoleId("");
+          setIsLoadingAdminCatalogs(true);
         }
 
         try {
-          const assignableRolesResponse = await getAssignableRoles();
+          const [rolesResponse, projectsResponse] = await Promise.all([
+            getAssignableRoles(),
+            getProjects({ status: "ACTIVE" }),
+          ]);
 
           if (isMounted) {
-            setAssignableRoles(assignableRolesResponse);
-            setCanEditRoles(true);
+            setAssignableRoles(rolesResponse);
+            setAssignableProjects(projectsResponse);
+            setSelectedProjectRoleId(rolesResponse[0]?.id ?? "");
+            setCanAdministerUser(true);
           }
         } catch (caughtError) {
           if (!isMounted) {
@@ -75,7 +99,8 @@ export default function UserDetailPage() {
           }
 
           setAssignableRoles([]);
-          setCanEditRoles(false);
+          setAssignableProjects([]);
+          setCanAdministerUser(false);
 
           if (
             caughtError instanceof ApiClientError &&
@@ -91,18 +116,18 @@ export default function UserDetailPage() {
             caughtError.status === 403
           ) {
             setRolesCatalogError(
-              "No tienes permisos suficientes para administrar roles.",
+              "No tienes permisos suficientes para administrar este usuario.",
             );
           } else {
             setRolesCatalogError(
               caughtError instanceof ApiClientError
                 ? caughtError.message
-                : "No fue posible cargar el catalogo de roles asignables.",
+                : "No fue posible cargar los catálogos administrativos.",
             );
           }
         } finally {
           if (isMounted) {
-            setIsLoadingRolesCatalog(false);
+            setIsLoadingAdminCatalogs(false);
           }
         }
       } catch (caughtError) {
@@ -135,8 +160,82 @@ export default function UserDetailPage() {
     };
   }, [params.id, router]);
 
+  const availableProjects = useMemo(() => {
+    if (!user) {
+      return [];
+    }
+
+    const assignedProjectIds = new Set(user.projects.map((project) => project.id));
+
+    return assignableProjects.filter(
+      (project) => !assignedProjectIds.has(project.id),
+    );
+  }, [assignableProjects, user]);
+
+  async function persistRoleKeys(
+    nextRoleKeys: Set<string>,
+    options: {
+      successMessage: string;
+      setSaving: (isSaving: boolean) => void;
+      setError: (message: string | null) => void;
+      setSuccess: (message: string | null) => void;
+    },
+  ) {
+    if (!user || !canAdministerUser) {
+      return;
+    }
+
+    options.setSaving(true);
+    options.setError(null);
+    options.setSuccess(null);
+
+    try {
+      const nextAssignments = [...nextRoleKeys]
+        .map(parseRoleKey)
+        .filter(
+          (assignment): assignment is { projectId: string; roleId: string } =>
+            assignment !== null,
+        );
+      const updatedUser = await updateUserRoles(user.id, nextAssignments);
+
+      setUser(updatedUser);
+      setSelectedRoleKeys(new Set(updatedUser.roles.map(getRoleKey)));
+      setSelectedProjectId("");
+      options.setSuccess(options.successMessage);
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        logout();
+        router.replace("/login");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
+        options.setError("No tienes permisos suficientes para esta acción.");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 404) {
+        options.setError("Usuario, proyecto o rol no encontrado.");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 409) {
+        options.setError(caughtError.message);
+        return;
+      }
+
+      options.setError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible completar la acción.",
+      );
+    } finally {
+      options.setSaving(false);
+    }
+  }
+
   async function handleSaveRoles() {
-    if (!user || !canEditRoles) {
+    if (!user || !canAdministerUser) {
       return;
     }
 
@@ -148,46 +247,16 @@ export default function UserDetailPage() {
       return;
     }
 
-    setIsSavingRoles(true);
-    setRolesError(null);
-    setRolesSuccess(null);
-
-    try {
-      const nextAssignments = [...selectedRoleKeys]
-        .map(parseRoleKey)
-        .filter(
-          (assignment): assignment is { projectId: string; roleId: string } =>
-            assignment !== null,
-        );
-      const updatedUser = await updateUserRoles(user.id, nextAssignments);
-
-      setUser(updatedUser);
-      setSelectedRoleKeys(new Set(updatedUser.roles.map(getRoleKey)));
-      setRolesSuccess("Roles actualizados correctamente.");
-    } catch (caughtError) {
-      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
-        logout();
-        router.replace("/login");
-        return;
-      }
-
-      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
-        setRolesError("No tienes permisos suficientes para administrar roles.");
-        return;
-      }
-
-      setRolesError(
-        caughtError instanceof ApiClientError
-          ? caughtError.message
-          : "No fue posible actualizar los roles.",
-      );
-    } finally {
-      setIsSavingRoles(false);
-    }
+    await persistRoleKeys(selectedRoleKeys, {
+      successMessage: "Roles actualizados correctamente.",
+      setSaving: setIsSavingRoles,
+      setError: setRolesError,
+      setSuccess: setRolesSuccess,
+    });
   }
 
   function handleToggleRole(roleKey: string) {
-    if (!canEditRoles) {
+    if (!canAdministerUser) {
       return;
     }
 
@@ -205,15 +274,126 @@ export default function UserDetailPage() {
     });
   }
 
+  async function handleAssignProject() {
+    if (
+      !user ||
+      !canAdministerUser ||
+      !selectedProjectId ||
+      !selectedProjectRoleId
+    ) {
+      setProjectsError("Selecciona un proyecto y un rol inicial.");
+      return;
+    }
+
+    const project = assignableProjects.find(
+      (candidate) => candidate.id === selectedProjectId,
+    );
+    const role = assignableRoles.find(
+      (candidate) => candidate.id === selectedProjectRoleId,
+    );
+    const confirmed = window.confirm(
+      `¿Deseas asociar a este usuario al proyecto ${project?.name ?? "seleccionado"} con el rol ${role?.name ?? "seleccionado"}?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const nextKeys = new Set(selectedRoleKeys);
+    nextKeys.add(`${selectedProjectId}:${selectedProjectRoleId}`);
+
+    await persistRoleKeys(nextKeys, {
+      successMessage: "Proyecto asociado correctamente.",
+      setSaving: setIsSavingProjects,
+      setError: setProjectsError,
+      setSuccess: setProjectsSuccess,
+    });
+  }
+
+  async function handleRemoveProject(project: UserProject) {
+    if (!user || !canAdministerUser) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Deseas remover a este usuario del proyecto ${project.name}? Se quitarán sus roles visibles en ese proyecto.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const nextKeys = new Set(
+      [...selectedRoleKeys].filter((roleKey) => {
+        const assignment = parseRoleKey(roleKey);
+
+        return assignment?.projectId !== project.id;
+      }),
+    );
+
+    await persistRoleKeys(nextKeys, {
+      successMessage: "Proyecto removido correctamente.",
+      setSaving: setIsSavingProjects,
+      setError: setProjectsError,
+      setSuccess: setProjectsSuccess,
+    });
+  }
+
+  async function handleInvalidateSessions() {
+    if (!user || !canAdministerUser || isInvalidatingSessions) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "¿Seguro que deseas invalidar todas las sesiones de este usuario? Esta acción cerrará sus sesiones activas.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsInvalidatingSessions(true);
+    setSessionsError(null);
+    setSessionsSuccess(null);
+
+    try {
+      const updatedUser = await invalidateUserSessions(user.id);
+
+      setUser(updatedUser);
+      setSessionsSuccess("Sesiones invalidadas correctamente.");
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        logout();
+        router.replace("/login");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
+        setSessionsError("No tienes permisos para invalidar sesiones.");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 404) {
+        setSessionsError("Usuario no encontrado.");
+        return;
+      }
+
+      setSessionsError("No se pudieron invalidar las sesiones.");
+    } finally {
+      setIsInvalidatingSessions(false);
+    }
+  }
+
   return (
     <AuthGuard>
       <section>
         <div className="page-header dashboard-header">
           <div>
-            <p className="eyebrow">Administracion</p>
+            <p className="eyebrow">Administración</p>
             <h1>Detalle de usuario</h1>
             <p className="muted">
-              Informacion de usuario, roles y proyectos en modo solo lectura.
+              Información operativa de usuario, roles, organizaciones y
+              proyectos asociados.
             </p>
           </div>
           <div className="toolbar">
@@ -249,7 +429,7 @@ export default function UserDetailPage() {
               </div>
               <div className="user-detail-grid">
                 <InfoLine label="Estado" value={formatUserStatus(user.status)} />
-                <InfoLine label="Activo" value={user.isActive ? "Si" : "No"} />
+                <InfoLine label="Activo" value={user.isActive ? "Sí" : "No"} />
                 <InfoLine label="Creado" value={formatDateTime(user.createdAt)} />
                 <InfoLine
                   label="Actualizado"
@@ -266,8 +446,8 @@ export default function UserDetailPage() {
             <section className="dashboard-section">
               <div className="section-heading">
                 <div>
-                  <h2>Roles</h2>
-                  <p className="muted">Roles asignados por proyecto.</p>
+                  <h2>Roles asignados</h2>
+                  <p className="muted">Roles activos por proyecto visible.</p>
                 </div>
               </div>
               {user.roles.length === 0 ? (
@@ -278,7 +458,7 @@ export default function UserDetailPage() {
                 <div className="users-chip-list">
                   {user.roles.map((role) => (
                     <span className="badge" key={`${role.id}-${role.projectId}`}>
-                      {role.name} - {role.projectName}
+                      {role.name} · {role.projectName}
                     </span>
                   ))}
                 </div>
@@ -288,93 +468,27 @@ export default function UserDetailPage() {
             <section className="dashboard-section">
               <div className="section-heading">
                 <div>
-                  <h2>Administracion de roles</h2>
+                  <h2>Organizaciones asociadas</h2>
                   <p className="muted">
-                    Gestiona asignaciones usando el catalogo real de roles
-                    disponibles para tu alcance.
+                    Organizaciones derivadas de sus proyectos activos.
                   </p>
                 </div>
               </div>
-
-              {isLoadingRolesCatalog ? (
-                <div className="audit-state">
-                  <span className="audit-state-icon">...</span>
-                  <div>
-                    <strong>Cargando catalogo de roles</strong>
-                    <p className="muted">
-                      Estamos consultando los roles asignables para tu usuario.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              {!canEditRoles && !isLoadingRolesCatalog ? (
-                <div className="audit-state audit-state-error">
-                  <span className="audit-state-icon">!</span>
-                  <div>
-                    <strong>Permisos insuficientes</strong>
-                    <p className="muted">
-                      Tu usuario no tiene permisos administrativos para editar
-                      roles.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              {rolesCatalogError ? (
-                <p className="form-error">{rolesCatalogError}</p>
-              ) : null}
-              {rolesError ? (
-                <p className="form-error">{rolesError}</p>
-              ) : null}
-              {rolesSuccess ? (
-                <p className="form-success">{rolesSuccess}</p>
-              ) : null}
-
-              {canEditRoles && assignableRoles.length === 0 ? (
+              {user.organizations.length === 0 ? (
                 <div className="empty-state">
                   <p className="muted">
-                    No hay roles asignables disponibles para tu alcance actual.
+                    Sin organizaciones visibles para este usuario.
                   </p>
                 </div>
               ) : (
-                <RoleAssignmentMatrix
-                  assignableRoles={assignableRoles}
-                  disabled={!canEditRoles || isSavingRoles}
-                  onToggleRole={handleToggleRole}
-                  projects={user.projects}
-                  selectedRoleKeys={selectedRoleKeys}
-                />
+                <div className="users-chip-list">
+                  {user.organizations.map((organization) => (
+                    <span className="badge" key={organization.id}>
+                      {organization.name}
+                    </span>
+                  ))}
+                </div>
               )}
-
-              <div className="toolbar">
-                <button
-                  className="button"
-                  disabled={
-                    !canEditRoles ||
-                    !hasRoleChanges(user.roles, selectedRoleKeys) ||
-                    isSavingRoles
-                  }
-                  onClick={handleSaveRoles}
-                  type="button"
-                >
-                  {isSavingRoles ? "Guardando..." : "Guardar cambios"}
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={
-                    !canEditRoles ||
-                    !hasRoleChanges(user.roles, selectedRoleKeys) ||
-                    isSavingRoles
-                  }
-                  onClick={() =>
-                    setSelectedRoleKeys(new Set(user.roles.map(getRoleKey)))
-                  }
-                  type="button"
-                >
-                  Revertir
-                </button>
-              </div>
             </section>
 
             <section className="dashboard-section">
@@ -382,7 +496,7 @@ export default function UserDetailPage() {
                 <div>
                   <h2>Proyectos asociados</h2>
                   <p className="muted">
-                    Proyectos visibles para tu alcance actual.
+                    Proyectos activos visibles para tu alcance actual.
                   </p>
                 </div>
               </div>
@@ -398,11 +512,234 @@ export default function UserDetailPage() {
                       <span>{project.code}</span>
                       <span>{project.organization.name}</span>
                       <span>{project.status}</span>
+                      {canAdministerUser ? (
+                        <button
+                          className="button secondary"
+                          disabled={isSavingProjects}
+                          onClick={() => handleRemoveProject(project)}
+                          type="button"
+                        >
+                          Remover proyecto
+                        </button>
+                      ) : null}
                     </article>
                   ))}
                 </div>
               )}
             </section>
+
+            <section className="dashboard-section">
+              <div className="section-heading">
+                <div>
+                  <h2>Acciones administrativas disponibles</h2>
+                  <p className="muted">
+                    Las acciones se limitan a tu alcance y el backend conserva
+                    las reglas RBAC.
+                  </p>
+                </div>
+              </div>
+
+              {isLoadingAdminCatalogs ? (
+                <div className="audit-state">
+                  <span className="audit-state-icon">...</span>
+                  <div>
+                    <strong>Cargando catálogos administrativos</strong>
+                    <p className="muted">
+                      Estamos consultando roles y proyectos disponibles.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {!canAdministerUser && !isLoadingAdminCatalogs ? (
+                <div className="audit-state audit-state-error">
+                  <span className="audit-state-icon">!</span>
+                  <div>
+                    <strong>Modo solo lectura</strong>
+                    <p className="muted">
+                      Tu usuario no tiene permisos administrativos suficientes
+                      para modificar roles, proyectos o sesiones.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {rolesCatalogError ? (
+                <p className="form-error">{rolesCatalogError}</p>
+              ) : null}
+            </section>
+
+            {canAdministerUser ? (
+              <>
+                <section className="dashboard-section">
+                  <div className="section-heading">
+                    <div>
+                      <h2>Administración de roles</h2>
+                      <p className="muted">
+                        Asigna o remueve roles permitidos en proyectos dentro de
+                        tu alcance.
+                      </p>
+                    </div>
+                  </div>
+
+                  {rolesError ? <p className="form-error">{rolesError}</p> : null}
+                  {rolesSuccess ? (
+                    <p className="form-success">{rolesSuccess}</p>
+                  ) : null}
+
+                  {assignableRoles.length === 0 ? (
+                    <div className="empty-state">
+                      <p className="muted">
+                        No hay roles asignables disponibles para tu alcance
+                        actual.
+                      </p>
+                    </div>
+                  ) : (
+                    <RoleAssignmentMatrix
+                      assignableRoles={assignableRoles}
+                      disabled={!canAdministerUser || isSavingRoles}
+                      onToggleRole={handleToggleRole}
+                      projects={user.projects}
+                      selectedRoleKeys={selectedRoleKeys}
+                    />
+                  )}
+
+                  <div className="toolbar">
+                    <button
+                      className="button"
+                      disabled={
+                        !hasRoleChanges(user.roles, selectedRoleKeys) ||
+                        isSavingRoles
+                      }
+                      onClick={handleSaveRoles}
+                      type="button"
+                    >
+                      {isSavingRoles ? "Guardando..." : "Guardar roles"}
+                    </button>
+                    <button
+                      className="button secondary"
+                      disabled={
+                        !hasRoleChanges(user.roles, selectedRoleKeys) ||
+                        isSavingRoles
+                      }
+                      onClick={() =>
+                        setSelectedRoleKeys(new Set(user.roles.map(getRoleKey)))
+                      }
+                      type="button"
+                    >
+                      Revertir
+                    </button>
+                  </div>
+                </section>
+
+                <section className="dashboard-section">
+                  <div className="section-heading">
+                    <div>
+                      <h2>Administración de proyectos</h2>
+                      <p className="muted">
+                        Asocia un proyecto con un rol inicial o remueve todos los
+                        roles visibles de un proyecto.
+                      </p>
+                    </div>
+                  </div>
+
+                  {projectsError ? (
+                    <p className="form-error">{projectsError}</p>
+                  ) : null}
+                  {projectsSuccess ? (
+                    <p className="form-success">{projectsSuccess}</p>
+                  ) : null}
+
+                  <div className="users-admin-form">
+                    <label>
+                      <span>Proyecto</span>
+                      <select
+                        disabled={isSavingProjects || availableProjects.length === 0}
+                        onChange={(event) =>
+                          setSelectedProjectId(event.target.value)
+                        }
+                        value={selectedProjectId}
+                      >
+                        <option value="">Selecciona un proyecto</option>
+                        {availableProjects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.code} · {project.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Rol inicial</span>
+                      <select
+                        disabled={isSavingProjects || assignableRoles.length === 0}
+                        onChange={(event) =>
+                          setSelectedProjectRoleId(event.target.value)
+                        }
+                        value={selectedProjectRoleId}
+                      >
+                        {assignableRoles.map((role) => (
+                          <option key={role.id} value={role.id}>
+                            {role.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="button"
+                      disabled={
+                        isSavingProjects ||
+                        !selectedProjectId ||
+                        !selectedProjectRoleId
+                      }
+                      onClick={handleAssignProject}
+                      type="button"
+                    >
+                      {isSavingProjects ? "Guardando..." : "Asociar proyecto"}
+                    </button>
+                  </div>
+
+                  {availableProjects.length === 0 ? (
+                    <div className="empty-state">
+                      <p className="muted">
+                        No hay proyectos adicionales disponibles para asociar.
+                      </p>
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="dashboard-section">
+                  <div className="section-heading">
+                    <div>
+                      <h2>Administración de sesiones</h2>
+                      <p className="muted">
+                        Cierra todas las sesiones activas de este usuario.
+                        Deberá iniciar sesión nuevamente.
+                      </p>
+                    </div>
+                  </div>
+
+                  {sessionsError ? (
+                    <p className="form-error">{sessionsError}</p>
+                  ) : null}
+                  {sessionsSuccess ? (
+                    <p className="form-success">{sessionsSuccess}</p>
+                  ) : null}
+
+                  <div className="toolbar">
+                    <button
+                      className="button secondary"
+                      disabled={isInvalidatingSessions}
+                      onClick={handleInvalidateSessions}
+                      type="button"
+                    >
+                      {isInvalidatingSessions
+                        ? "Invalidando..."
+                        : "Invalidar sesiones"}
+                    </button>
+                  </div>
+                </section>
+              </>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -460,10 +797,6 @@ function RoleAssignmentMatrix({
     );
   }
 
-  if (assignableRoles.length === 0) {
-    return null;
-  }
-
   return (
     <div className="role-assignment-list role-assignment-matrix">
       {projects.map((project) => (
@@ -487,7 +820,7 @@ function RoleAssignmentMatrix({
                   <span>
                     <strong>{role.name}</strong>
                     <small>
-                      {role.code} - {formatPermissionSummary(role.permissions)}
+                      {role.code} · {formatPermissionSummary(role.permissions)}
                     </small>
                   </span>
                 </label>
@@ -525,6 +858,8 @@ function formatUserStatus(status: string) {
   const labels: Record<string, string> = {
     ACTIVE: "Activo",
     INACTIVE: "Inactivo",
+    BLOCKED: "Bloqueado",
+    PENDING_ACTIVATION: "Pendiente de activación",
   };
 
   return labels[status] ?? status;
@@ -532,7 +867,7 @@ function formatUserStatus(status: string) {
 
 function formatOrganizations(user: UserRead) {
   if (user.organizations.length === 0) {
-    return "Sin organizacion";
+    return "Sin organización";
   }
 
   return user.organizations.map((organization) => organization.name).join(", ");

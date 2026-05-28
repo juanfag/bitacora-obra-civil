@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -15,6 +16,7 @@ import {
 import { FileInterceptor } from "@nestjs/platform-express";
 import {
   ApiBearerAuth,
+  ApiBadRequestResponse,
   ApiBody,
   ApiConsumes,
   ApiConflictResponse,
@@ -24,6 +26,7 @@ import {
   ApiParam,
   ApiQuery,
   ApiTags,
+  ApiNotFoundResponse,
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { UserStatus } from "@prisma/client";
@@ -137,7 +140,7 @@ export class UsersController {
   @ApiQuery({ name: "page", required: false, example: 1 })
   @ApiQuery({ name: "limit", required: false, example: 20 })
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions("users:read", "organizations:read")
+  @Permissions("users:read")
   findAll(
     @CurrentUser() user: CurrentUserPayload,
     @Query("status") status?: UserStatus,
@@ -171,7 +174,7 @@ export class UsersController {
   @ApiForbiddenResponse({ description: "Insufficient permissions." })
   @ApiParam({ name: "id", description: "User UUID" })
   @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions("users:read", "organizations:read")
+  @Permissions("users:read")
   findOne(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
     return this.usersService.findOne(id, user.sub);
   }
@@ -185,6 +188,10 @@ export class UsersController {
   })
   @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
   @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @ApiConflictResponse({
+    description:
+      "The role change is not allowed because it would remove the last active administrator in its scope.",
+  })
   @ApiParam({ name: "id", description: "User UUID" })
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Permissions("users:manage", "organizations:update", "organizations:create")
@@ -207,8 +214,10 @@ export class UsersController {
     description: "User status updated.",
     type: UserReadDto,
   })
+  @ApiBadRequestResponse({ description: "Invalid status payload." })
   @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
   @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @ApiNotFoundResponse({ description: "User not found." })
   @ApiConflictResponse({
     description:
       "The status change is not allowed because it would remove the last active administrator.",
@@ -227,33 +236,73 @@ export class UsersController {
     @Body() updateUserStatusDto: UpdateUserStatusDto,
     @AuditContext() audit: AuditRequestContext,
   ) {
-    return this.usersService.updateStatus(
-      id,
-      updateUserStatusDto,
-      user.sub,
-      {
-        ...audit,
-        actorId: user.sub,
-      },
-    );
+    return this.usersService.updateStatus(id, updateUserStatusDto, user.sub, {
+      ...audit,
+      actorId: user.sub,
+    });
+  }
+
+  @Post(":id/invalidate-sessions")
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Invalidate all active sessions for a user" })
+  @ApiOkResponse({
+    description: "User sessions invalidated.",
+    type: UserReadDto,
+  })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @ApiNotFoundResponse({ description: "User not found." })
+  @ApiParam({ name: "id", description: "User UUID" })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    "users:update",
+    "users:manage",
+    "organizations:update",
+    "organizations:create",
+  )
+  @HttpCode(200)
+  invalidateSessions(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param("id") id: string,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.usersService.invalidateSessions(id, user.sub, {
+      ...audit,
+      actorId: user.sub,
+    });
   }
 
   @Post()
+  @ApiBearerAuth()
   @ApiOperation({ summary: "Create user" })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("users:create", "users:manage")
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
   }
 
   @Patch(":id")
+  @ApiBearerAuth()
   @ApiOperation({ summary: "Update user" })
   @ApiParam({ name: "id", description: "User UUID" })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("users:update", "users:manage")
   update(@Param("id") id: string, @Body() updateUserDto: UpdateUserDto) {
     return this.usersService.update(id, updateUserDto);
   }
 
   @Delete(":id")
+  @ApiBearerAuth()
   @ApiOperation({ summary: "Soft delete user" })
   @ApiParam({ name: "id", description: "User UUID" })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("users:delete", "users:manage")
   remove(@Param("id") id: string) {
     return this.usersService.remove(id);
   }

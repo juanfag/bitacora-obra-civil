@@ -61,6 +61,9 @@ export class UserReadDto {
   @ApiProperty({ example: true })
   isActive!: boolean;
 
+  @ApiProperty({ example: 0 })
+  tokenVersion!: number;
+
   @ApiProperty({ type: [UserRoleDto] })
   roles!: UserRoleDto[];
 

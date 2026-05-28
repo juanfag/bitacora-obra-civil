@@ -8,6 +8,7 @@ import { Prisma, ProjectStatus } from "@prisma/client";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "./project-access.policy";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { UpdateProjectDto } from "./dto/update-project.dto";
 
@@ -29,13 +30,25 @@ export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
-  async findAll(filters: ProjectFilters) {
+  async findAll(filters: ProjectFilters, currentUserId: string) {
     this.validateStatus(filters.status);
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      return [];
+    }
 
     return this.prisma.project.findMany({
       where: {
+        id: accessibleProjectIds
+          ? {
+              in: accessibleProjectIds,
+            }
+          : undefined,
         organizationId: filters.organizationId,
         status: filters.status,
       },
@@ -45,7 +58,16 @@ export class ProjectsService {
     });
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      currentUserId,
+      id,
+    );
+
+    if (!canAccessProject) {
+      throw new NotFoundException("Project not found");
+    }
+
     const project = await this.prisma.project.findUnique({
       where: { id },
     });

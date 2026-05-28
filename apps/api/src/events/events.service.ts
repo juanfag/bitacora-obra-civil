@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -16,6 +17,7 @@ import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { isEditableStatus } from "../daily-logs/daily-log-status.helper";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { FindEventsQueryDto } from "./dto/find-events-query.dto";
 import { UpdateEventDto } from "./dto/update-event.dto";
@@ -25,12 +27,28 @@ export class EventsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
-  async findAll(query: FindEventsQueryDto) {
+  async findAll(query: FindEventsQueryDto, currentUserId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const where = this.buildWhere(query);
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      return {
+        items: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
+    const where = this.buildWhere(query, accessibleProjectIds);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.event.findMany({
@@ -55,22 +73,31 @@ export class EventsService {
     };
   }
 
-  async findByDailyLog(dailyLogId: string, query: FindEventsQueryDto) {
-    await this.ensureDailyLogExists(dailyLogId);
+  async findByDailyLog(
+    dailyLogId: string,
+    query: FindEventsQueryDto,
+    currentUserId: string,
+  ) {
+    const dailyLog = await this.ensureDailyLogExists(dailyLogId);
+    await this.ensureUserCanAccessProject(currentUserId, dailyLog.projectId);
 
     return this.findAll({
       ...query,
       dailyLogId,
-    });
+    }, currentUserId);
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
     const event = await this.findActiveEvent(id);
+    await this.ensureUserCanAccessProject(currentUserId, event.projectId);
     return this.toResponse(event);
   }
 
   async create(createEventDto: CreateEventDto, audit: AuditRequestContext) {
     const dailyLog = await this.ensureDailyLogExists(createEventDto.dailyLogId);
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(audit.actorId, dailyLog.projectId);
+    }
     this.ensureDailyLogCanEditEvents(dailyLog);
     await this.ensureEventTypeExists(createEventDto.eventTypeId);
 
@@ -108,6 +135,9 @@ export class EventsService {
     audit: AuditRequestContext,
   ) {
     const currentEvent = await this.findActiveEvent(id);
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(audit.actorId, currentEvent.projectId);
+    }
     this.ensureDailyLogCanEditEvents(currentEvent.dailyLog);
 
     const dailyLog = updateEventDto.dailyLogId
@@ -115,6 +145,9 @@ export class EventsService {
       : undefined;
 
     if (dailyLog) {
+      if (audit.actorId) {
+        await this.ensureUserCanAccessProject(audit.actorId, dailyLog.projectId);
+      }
       this.ensureDailyLogCanEditEvents(dailyLog);
     }
 
@@ -154,6 +187,9 @@ export class EventsService {
 
   async remove(id: string, audit: AuditRequestContext) {
     const currentEvent = await this.findActiveEvent(id);
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(audit.actorId, currentEvent.projectId);
+    }
     this.ensureDailyLogCanEditEvents(currentEvent.dailyLog);
 
     const event = await this.prisma.event.update({
@@ -174,10 +210,18 @@ export class EventsService {
     return this.toResponse(event);
   }
 
-  private buildWhere(query: FindEventsQueryDto): Prisma.EventWhereInput {
+  private buildWhere(
+    query: FindEventsQueryDto,
+    accessibleProjectIds: string[] | null,
+  ): Prisma.EventWhereInput {
     return {
       dailyLogId: query.dailyLogId,
       eventTypeId: query.eventTypeId,
+      projectId: accessibleProjectIds
+        ? {
+            in: accessibleProjectIds,
+          }
+        : undefined,
       status: query.status ?? {
         not: EventStatus.VOIDED,
       },
@@ -233,6 +277,17 @@ export class EventsService {
     }
 
     return event;
+  }
+
+  private async ensureUserCanAccessProject(userId: string, projectId: string) {
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      userId,
+      projectId,
+    );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
   }
 
   private ensureDailyLogCanEditEvents(

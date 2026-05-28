@@ -19,6 +19,10 @@ import {
 import { ProjectStatus } from "@prisma/client";
 import { AuditRequestContext } from "../audit/audit.types";
 import { AuditContext } from "../audit/decorators/audit-context.decorator";
+import {
+  CurrentUser,
+  CurrentUserPayload,
+} from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -39,18 +43,19 @@ export class ProjectsController {
   @ApiQuery({ name: "status", enum: ProjectStatus, required: false })
   @Permissions("projects:read")
   findAll(
+    @CurrentUser() user: CurrentUserPayload,
     @Query("organizationId") organizationId?: string,
     @Query("status") status?: ProjectStatus,
   ) {
-    return this.projectsService.findAll({ organizationId, status });
+    return this.projectsService.findAll({ organizationId, status }, user.sub);
   }
 
   @Get(":id")
   @ApiOperation({ summary: "Get project by id" })
   @ApiParam({ name: "id", description: "Project UUID" })
   @Permissions("projects:read")
-  findOne(@Param("id") id: string) {
-    return this.projectsService.findOne(id);
+  findOne(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.projectsService.findOne(id, user.sub);
   }
 
   @Post()

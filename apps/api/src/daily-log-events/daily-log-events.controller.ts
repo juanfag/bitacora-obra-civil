@@ -24,6 +24,10 @@ import {
 } from "@nestjs/swagger";
 import { AuditRequestContext } from "../audit/audit.types";
 import { AuditContext } from "../audit/decorators/audit-context.decorator";
+import {
+  CurrentUser,
+  CurrentUserPayload,
+} from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -53,9 +57,13 @@ export class DailyLogEventsController {
   @Permissions("daily-log-events:create")
   create(
     @Body() createDailyLogEventDto: CreateDailyLogEventDto,
+    @CurrentUser() user: CurrentUserPayload,
     @AuditContext() audit: AuditRequestContext,
   ) {
-    return this.dailyLogEventsService.create(createDailyLogEventDto, audit);
+    return this.dailyLogEventsService.create(createDailyLogEventDto, {
+      ...audit,
+      actorId: user.sub,
+    });
   }
 
   @Get()
@@ -63,8 +71,11 @@ export class DailyLogEventsController {
   @ApiOkResponse({ description: "Daily log events returned with pagination metadata." })
   @ApiBadRequestResponse({ description: "Invalid query parameters." })
   @Permissions("daily-log-events:read")
-  findAll(@Query() query: FindDailyLogEventsQueryDto) {
-    return this.dailyLogEventsService.findAll(query);
+  findAll(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query() query: FindDailyLogEventsQueryDto,
+  ) {
+    return this.dailyLogEventsService.findAll(query, user.sub);
   }
 
   @Get(":id")
@@ -73,8 +84,8 @@ export class DailyLogEventsController {
   @ApiOkResponse({ description: "Daily log event returned." })
   @ApiNotFoundResponse({ description: "Daily log event not found." })
   @Permissions("daily-log-events:read")
-  findOne(@Param("id") id: string) {
-    return this.dailyLogEventsService.findOne(id);
+  findOne(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.dailyLogEventsService.findOne(id, user.sub);
   }
 
   @Patch(":id")
@@ -90,12 +101,16 @@ export class DailyLogEventsController {
   update(
     @Param("id") id: string,
     @Body() updateDailyLogEventDto: UpdateDailyLogEventDto,
+    @CurrentUser() user: CurrentUserPayload,
     @AuditContext() audit: AuditRequestContext,
   ) {
     return this.dailyLogEventsService.update(
       id,
       updateDailyLogEventDto,
-      audit,
+      {
+        ...audit,
+        actorId: user.sub,
+      },
     );
   }
 
@@ -110,8 +125,12 @@ export class DailyLogEventsController {
   @Permissions("daily-log-events:delete")
   remove(
     @Param("id") id: string,
+    @CurrentUser() user: CurrentUserPayload,
     @AuditContext() audit: AuditRequestContext,
   ) {
-    return this.dailyLogEventsService.remove(id, audit);
+    return this.dailyLogEventsService.remove(id, {
+      ...audit,
+      actorId: user.sub,
+    });
   }
 }

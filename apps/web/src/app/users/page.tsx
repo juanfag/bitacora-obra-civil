@@ -90,7 +90,7 @@ export default function UsersPage() {
       <section>
         <div className="page-header dashboard-header">
           <div>
-            <p className="eyebrow">Administracion</p>
+            <p className="eyebrow">Administración</p>
             <h1>Usuarios</h1>
             <p className="muted">
               Consulta usuarios, roles y proyectos asociados en modo solo lectura.
@@ -176,7 +176,7 @@ export default function UsersPage() {
                 Anterior
               </button>
               <span className="muted">
-                Pagina {meta?.page ?? page} de {Math.max(meta?.totalPages ?? 1, 1)}
+                Página {meta?.page ?? page} de {Math.max(meta?.totalPages ?? 1, 1)}
               </span>
               <button
                 className="button secondary"
@@ -234,7 +234,7 @@ function formatUserStatus(status: string) {
 
 function formatOrganizations(user: UserRead) {
   if (user.organizations.length === 0) {
-    return "Sin organizacion";
+    return "Sin organización";
   }
 
   return user.organizations.map((organization) => organization.name).join(", ");

@@ -105,7 +105,7 @@ export default function DailyLogsPage() {
       <section>
         <div className="page-header">
           <div>
-            <p className="eyebrow">Bitacoras</p>
+            <p className="eyebrow">Bitácoras</p>
             <h1>Registro de bitacoras</h1>
             <p className="muted">
               Revisa las bitacoras del proyecto seleccionado.

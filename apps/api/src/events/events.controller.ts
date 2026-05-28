@@ -17,6 +17,10 @@ import {
 } from "@nestjs/swagger";
 import { AuditRequestContext } from "../audit/audit.types";
 import { AuditContext } from "../audit/decorators/audit-context.decorator";
+import {
+  CurrentUser,
+  CurrentUserPayload,
+} from "../auth/decorators/current-user.decorator";
 import { Permissions } from "../auth/decorators/permissions.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -35,16 +39,19 @@ export class EventsController {
   @Get("events")
   @ApiOperation({ summary: "List events" })
   @Permissions("events:read")
-  findAll(@Query() query: FindEventsQueryDto) {
-    return this.eventsService.findAll(query);
+  findAll(
+    @CurrentUser() user: CurrentUserPayload,
+    @Query() query: FindEventsQueryDto,
+  ) {
+    return this.eventsService.findAll(query, user.sub);
   }
 
   @Get("events/:id")
   @ApiOperation({ summary: "Get event by id" })
   @ApiParam({ name: "id", description: "Event UUID" })
   @Permissions("events:read")
-  findOne(@Param("id") id: string) {
-    return this.eventsService.findOne(id);
+  findOne(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.eventsService.findOne(id, user.sub);
   }
 
   @Get("daily-logs/:dailyLogId/events")
@@ -52,10 +59,11 @@ export class EventsController {
   @ApiParam({ name: "dailyLogId", description: "Daily log UUID" })
   @Permissions("events:read")
   findByDailyLog(
+    @CurrentUser() user: CurrentUserPayload,
     @Param("dailyLogId") dailyLogId: string,
     @Query() query: FindEventsQueryDto,
   ) {
-    return this.eventsService.findByDailyLog(dailyLogId, query);
+    return this.eventsService.findByDailyLog(dailyLogId, query, user.sub);
   }
 
   @Post("events")

@@ -1,28 +1,23 @@
-# FASE 62.2 - Endpoints administrativos para cambio de estado de usuarios
+# FASE 62.2 - Endpoint administrativo para cambio de estado de usuarios
 
 ## Objetivo
 
-Permitir a usuarios autorizados cambiar el estado de otros usuarios de forma auditada y segura.
+Crear un endpoint administrativo para cambiar el estado de usuarios de forma segura, sin modificar frontend, sin implementar auditoria todavia y sin implementar invalidacion completa de JWT en guards.
 
-## Endpoint implementado
+## Endpoint
 
 ```http
 PATCH /api/v1/users/:id/status
 ```
 
-Guards:
+Body:
 
-- `JwtAuthGuard`
-- `PermissionsGuard`
-
-Permisos aceptados:
-
-- `users:update`
-- `users:manage`
-- `organizations:update`
-- `organizations:create`
-
-Se conserva compatibilidad con permisos administrativos existentes mientras se formaliza `users:update` en el catalogo RBAC.
+```json
+{
+  "status": "INACTIVE",
+  "reason": "Usuario retirado del proyecto"
+}
+```
 
 ## DTO
 
@@ -35,88 +30,105 @@ Campos:
 - `status`: requerido, enum `UserStatus`
 - `reason`: opcional, string, maximo 500 caracteres
 
-## Reglas implementadas
+## Seguridad
+
+El endpoint usa:
+
+- `JwtAuthGuard`
+- `PermissionsGuard`
+
+Permisos aceptados:
+
+- `users:update`
+- `users:manage`
+- `organizations:update`
+- `organizations:create`
+
+Se usa `users:update` como permiso formal y se mantienen equivalentes administrativos existentes para compatibilidad con el RBAC actual.
+
+## Validaciones implementadas
 
 - El usuario objetivo debe existir.
-- El actor debe estar autenticado y tener permisos administrativos.
+- El actor autenticado debe existir.
 - El actor no puede cambiar su propio estado.
-- Si el nuevo estado no es `ACTIVE`, se valida que no sea el ultimo `SUPER_ADMIN` activo.
-- Si el nuevo estado no es `ACTIVE`, se valida que no sea el ultimo administrador activo de una organizacion segun el modelo actual de proyectos, roles y permisos administrativos.
-- La asignacion respeta el alcance de proyectos accesibles mediante `ProjectAccessPolicy`.
+- Si el usuario pasa desde `ACTIVE` hacia un estado no activo, no se permite bloquear/inactivar el ultimo `SUPER_ADMIN` activo.
+- Si el usuario pasa desde `ACTIVE` hacia un estado no activo, no se permite bloquear/inactivar el ultimo administrador activo de una organizacion segun el modelo actual.
+- Se respeta el alcance de proyectos accesibles mediante `ProjectAccessPolicy`.
 
-## Actualizacion de estado
+## Manejo idempotente
 
-Al cambiar el estado se actualizan:
+Si el estado actual del usuario ya es igual al estado solicitado:
 
-- `status`
-- `statusChangedAt`
-- `statusChangedById`
-- `blockedReason`, solo cuando `status = BLOCKED`
-- `tokenVersion`, incrementado en 1 para revocar tokens previos
+- Responde `200 OK`.
+- No modifica `statusChangedAt`.
+- No modifica `statusChangedById`.
+- No modifica `blockedReason`.
+- No incrementa `tokenVersion`.
+- No ejecuta cambios destructivos.
 
-Si el estado nuevo es distinto de `BLOCKED`, `blockedReason` se limpia.
+## Cambio real de estado
 
-## Invalidacion de tokens
+Cuando el estado cambia:
 
-Se actualizo autenticacion para que el JWT incluya `tokenVersion` y `JwtStrategy` valide:
-
-- que el usuario exista
-- que el usuario siga `ACTIVE`
-- que `payload.tokenVersion` coincida con `user.tokenVersion`
-
-Esto hace efectiva la invalidacion de tokens al cambiar estado.
-
-## Auditoria
-
-Se registra auditoria `UPDATE` sobre entidad `User`.
-
-Payload auditado:
-
-- estado anterior
-- razon de bloqueo anterior
-- estado nuevo
-- razon de bloqueo nueva
-- fecha/cambiador de estado
-- version de token
-
-No se auditan password, hashes, tokens, base64, rutas internas ni datos sensibles.
+- Actualiza `status`.
+- Actualiza `statusChangedAt` con la fecha/hora actual.
+- Actualiza `statusChangedById` con el actor autenticado.
+- Si el nuevo estado es `BLOCKED`, guarda `blockedReason = reason`.
+- Si el nuevo estado no es `BLOCKED`, limpia `blockedReason`.
+- Incrementa `tokenVersion` en 1.
 
 ## Respuesta
 
-El endpoint devuelve `UserReadDto`, la misma respuesta sanitizada usada por el detalle de usuarios.
+Devuelve `UserReadDto` sanitizado.
+
+Incluye:
+
+- `status`
+- `tokenVersion`
+- datos visibles de usuario, roles y proyectos
 
 No expone:
 
 - `passwordHash`
 - tokens
 - secretos
+- hashes
 - rutas internas
-- hashes completos
+
+## Swagger
+
+El endpoint documenta:
+
+- body
+- `200 OK`
+- `400 Bad Request`
+- `401 Unauthorized`
+- `403 Forbidden`
+- `404 Not Found`
+- `409 Conflict`
+
+## Exclusiones de esta fase
+
+- No se modifico frontend.
+- No se implemento auditoria para cambio de estado. Queda para FASE 62.4.
+- No se implemento invalidacion completa de JWT/tokenVersion en guards. Queda para FASE 62.3.
 
 ## Archivos modificados
 
-- `apps/api/src/auth/auth.service.ts`
-- `apps/api/src/auth/decorators/current-user.decorator.ts`
-- `apps/api/src/auth/strategies/jwt.strategy.ts`
 - `apps/api/src/users/dto/update-user-status.dto.ts`
+- `apps/api/src/users/dto/user-read-response.dto.ts`
 - `apps/api/src/users/users.controller.ts`
 - `apps/api/src/users/users.service.ts`
 - `docs/FASE_62_2_USER_STATUS_ENDPOINTS.md`
 
-## Validacion
+## Validaciones
 
-Comando ejecutado:
+Comandos requeridos:
 
 ```powershell
+npx.cmd prisma validate
+npx.cmd prisma generate
 npm.cmd run api:build
 ```
 
-Resultado:
-
-```text
-api:build OK
-```
-
-## Nota operativa
-
-Este endpoint depende de los campos de FASE 62.1 (`UserStatus`, `statusChangedAt`, `statusChangedById`, `blockedReason`, `tokenVersion`). Debe aplicarse la migracion de FASE 62.1 antes de probarlo contra una base de datos real.
+Resultado final: OK.

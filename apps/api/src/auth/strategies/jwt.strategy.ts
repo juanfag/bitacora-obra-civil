@@ -20,6 +20,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: CurrentUserPayload) {
+    if (typeof payload.tokenVersion !== "number") {
+      throw new UnauthorizedException("Invalid or expired session.");
+    }
+
     const user = await this.prisma.user.findUnique({
       where: {
         id: payload.sub,
@@ -32,11 +36,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user || user.status !== UserStatus.ACTIVE) {
-      throw new UnauthorizedException("User is not active.");
+      throw new UnauthorizedException("Invalid or expired session.");
     }
 
     if (user.tokenVersion !== payload.tokenVersion) {
-      throw new UnauthorizedException("Token has been revoked.");
+      throw new UnauthorizedException("Invalid or expired session.");
     }
 
     return payload;

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -9,6 +10,7 @@ import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { isEditableStatus } from "../daily-logs/daily-log-status.helper";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { CreateDailyLogEventDto } from "./dto/create-daily-log-event.dto";
 import { FindDailyLogEventsQueryDto } from "./dto/find-daily-log-events-query.dto";
 import { UpdateDailyLogEventDto } from "./dto/update-daily-log-event.dto";
@@ -18,12 +20,28 @@ export class DailyLogEventsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
-  async findAll(query: FindDailyLogEventsQueryDto) {
+  async findAll(query: FindDailyLogEventsQueryDto, currentUserId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const where = this.buildWhere(query);
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      return {
+        items: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
+    const where = this.buildWhere(query, accessibleProjectIds);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.dailyLogEvent.findMany({
@@ -48,8 +66,12 @@ export class DailyLogEventsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
     const event = await this.findActiveDailyLogEvent(id);
+    await this.ensureUserCanAccessProject(
+      currentUserId,
+      event.dailyLog.projectId,
+    );
     return this.toResponse(event);
   }
 
@@ -60,6 +82,9 @@ export class DailyLogEventsService {
     const dailyLog = await this.ensureDailyLogExists(
       createDailyLogEventDto.dailyLogId,
     );
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(audit.actorId, dailyLog.projectId);
+    }
     this.ensureDailyLogCanEditEvents(dailyLog);
     await this.ensureEventTypeExists(createDailyLogEventDto.eventTypeId);
 
@@ -94,6 +119,12 @@ export class DailyLogEventsService {
     audit: AuditRequestContext,
   ) {
     const currentEvent = await this.findActiveDailyLogEvent(id);
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(
+        audit.actorId,
+        currentEvent.dailyLog.projectId,
+      );
+    }
     this.ensureDailyLogCanEditEvents(currentEvent.dailyLog);
 
     const dailyLog = updateDailyLogEventDto.dailyLogId
@@ -101,6 +132,9 @@ export class DailyLogEventsService {
       : undefined;
 
     if (dailyLog) {
+      if (audit.actorId) {
+        await this.ensureUserCanAccessProject(audit.actorId, dailyLog.projectId);
+      }
       this.ensureDailyLogCanEditEvents(dailyLog);
     }
 
@@ -138,6 +172,12 @@ export class DailyLogEventsService {
 
   async remove(id: string, audit: AuditRequestContext) {
     const currentEvent = await this.findActiveDailyLogEvent(id);
+    if (audit.actorId) {
+      await this.ensureUserCanAccessProject(
+        audit.actorId,
+        currentEvent.dailyLog.projectId,
+      );
+    }
     this.ensureDailyLogCanEditEvents(currentEvent.dailyLog);
 
     const event = await this.prisma.dailyLogEvent.update({
@@ -159,11 +199,19 @@ export class DailyLogEventsService {
 
   private buildWhere(
     query: FindDailyLogEventsQueryDto,
+    accessibleProjectIds: string[] | null,
   ): Prisma.DailyLogEventWhereInput {
     return {
       dailyLogId: query.dailyLogId,
       eventTypeId: query.eventTypeId,
       deletedAt: null,
+      dailyLog: accessibleProjectIds
+        ? {
+            projectId: {
+              in: accessibleProjectIds,
+            },
+          }
+        : undefined,
       reportedAt:
         query.reportedFrom || query.reportedTo
           ? {
@@ -187,6 +235,7 @@ export class DailyLogEventsService {
       select: {
         id: true,
         status: true,
+        projectId: true,
       },
     });
 
@@ -229,6 +278,17 @@ export class DailyLogEventsService {
     }
 
     return event;
+  }
+
+  private async ensureUserCanAccessProject(userId: string, projectId: string) {
+    const canAccessProject = await this.projectAccessPolicy.canAccessProject(
+      userId,
+      projectId,
+    );
+
+    if (!canAccessProject) {
+      throw new ForbiddenException("User does not have access to this project.");
+    }
   }
 
   private ensureDailyLogCanEditEvents(

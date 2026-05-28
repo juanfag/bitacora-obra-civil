@@ -88,7 +88,7 @@ export default function ProjectsPage() {
               Ver bitacoras
             </Link>
             <button className="button secondary" onClick={handleLogout} type="button">
-              Cerrar sesion
+              Cerrar sesión
             </button>
           </div>
         </div>
