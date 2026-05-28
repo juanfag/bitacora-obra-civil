@@ -96,6 +96,73 @@ export type UserSignature = {
   previewDataUrl: string | null;
 };
 
+export type UserOrganization = {
+  id: string;
+  name: string;
+};
+
+export type UserProject = {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+  organization: UserOrganization;
+};
+
+export type UserRole = {
+  id: string;
+  code: string;
+  name: string;
+  projectId: string;
+  projectName: string;
+};
+
+export type UserRead = {
+  id: string;
+  name: string;
+  fullName: string;
+  email: string;
+  status: string;
+  isActive: boolean;
+  roles: UserRole[];
+  organization: UserOrganization | null;
+  organizations: UserOrganization[];
+  projects: UserProject[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UsersReadResponse = {
+  items: UserRead[];
+  meta: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+export type UserRoleAssignmentInput = {
+  projectId: string;
+  roleId: string;
+};
+
+export type AssignableRolePermission = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+};
+
+export type AssignableRole = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  scope: string;
+  permissions: AssignableRolePermission[];
+};
+
 export type DailyLogSignatureType = "RESPONSIBLE" | "APPROVER" | "INSPECTOR";
 
 export type DailyLogSignature = {
@@ -165,6 +232,48 @@ export function getDashboardRecentActivity(limit = 20) {
   return apiRequest<DashboardRecentActivity>(
     `/dashboard/recent-activity?limit=${encodeURIComponent(limit)}`,
   );
+}
+
+export function getUsers(params: {
+  page?: number;
+  limit?: number;
+  search?: string;
+} = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (params.page) {
+    searchParams.set("page", String(params.page));
+  }
+
+  if (params.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+
+  if (params.search?.trim()) {
+    searchParams.set("search", params.search.trim());
+  }
+
+  const query = searchParams.toString();
+
+  return apiRequest<UsersReadResponse>(`/users${query ? `?${query}` : ""}`);
+}
+
+export function getUser(userId: string) {
+  return apiRequest<UserRead>(`/users/${encodeURIComponent(userId)}`);
+}
+
+export function updateUserRoles(
+  userId: string,
+  assignments: UserRoleAssignmentInput[],
+) {
+  return apiRequest<UserRead>(`/users/${encodeURIComponent(userId)}/roles`, {
+    method: "PATCH",
+    body: JSON.stringify({ assignments }),
+  });
+}
+
+export function getAssignableRoles() {
+  return apiRequest<AssignableRole[]>("/roles/assignable");
 }
 
 export function getMySignature() {

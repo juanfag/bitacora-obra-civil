@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -12,16 +13,37 @@ import { readFile, unlink } from "node:fs/promises";
 import { AuditService } from "../audit/audit.service";
 import { AuditRequestContext } from "../audit/audit.types";
 import { PrismaService } from "../prisma/prisma.service";
+import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { UploadedFile } from "../uploads/upload-file.types";
+import { AssignUserRolesDto } from "./dto/assign-user-roles.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
+import {
+  UserReadDto,
+  UsersReadListResponseDto,
+} from "./dto/user-read-response.dto";
 
 type UserFilters = {
+  currentUserId: string;
   status?: RecordStatus;
   email?: string;
   fullName?: string;
   documentNumber?: string;
+  search?: string;
+  page?: string;
+  limit?: string;
 };
+
+type NormalizedRoleAssignment = {
+  projectId: string;
+  roleId: string;
+};
+
+const ADMIN_PERMISSION_CODES = [
+  "users:manage",
+  "organizations:create",
+  "organizations:update",
+] satisfies string[];
 
 const userSelect = {
   id: true,
@@ -34,6 +56,45 @@ const userSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.UserSelect;
+
+const userReadSelect = {
+  id: true,
+  fullName: true,
+  email: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  projectAssignments: {
+    select: {
+      status: true,
+      role: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
+      project: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          status: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.UserSelect;
+
+type UserReadRecord = Prisma.UserGetPayload<{
+  select: typeof userReadSelect;
+}>;
 
 const userSignatureSelect = {
   id: true,
@@ -54,51 +115,232 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly projectAccessPolicy: ProjectAccessPolicy,
   ) {}
 
-  async findAll(filters: UserFilters) {
+  async findAll(filters: UserFilters): Promise<UsersReadListResponseDto> {
     this.validateStatus(filters.status);
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(
+        filters.currentUserId,
+      );
+    const pagination = parsePagination(filters.page, filters.limit);
 
-    return this.prisma.user.findMany({
-      select: userSelect,
-      where: {
-        status: filters.status,
-        email: filters.email
-          ? {
-              contains: filters.email,
-              mode: "insensitive",
-            }
-          : undefined,
-        fullName: filters.fullName
-          ? {
-              contains: filters.fullName,
-              mode: "insensitive",
-            }
-          : undefined,
-        documentNumber: filters.documentNumber
-          ? {
-              contains: filters.documentNumber,
-              mode: "insensitive",
-            }
-          : undefined,
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      return {
+        items: [],
+        meta: {
+          page: pagination.page,
+          limit: pagination.limit,
+          total: 0,
+          totalPages: 0,
+        },
+      };
+    }
+
+    const where = buildUserReadWhere(filters, accessibleProjectIds);
+    const assignmentWhere = buildVisibleAssignmentWhere(accessibleProjectIds);
+
+    const [total, users] = await this.prisma.$transaction([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        select: {
+          ...userReadSelect,
+          projectAssignments: {
+            where: assignmentWhere,
+            select: userReadSelect.projectAssignments.select,
+          },
+        },
+        where,
+        orderBy: {
+          createdAt: "desc",
+        },
+        skip: (pagination.page - 1) * pagination.limit,
+        take: pagination.limit,
+      }),
+    ]);
+
+    return {
+      items: users.map(toUserReadDto),
+      meta: {
+        page: pagination.page,
+        limit: pagination.limit,
+        total,
+        totalPages: Math.ceil(total / pagination.limit),
       },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    };
   }
 
-  async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      select: userSelect,
-      where: { id },
-    });
+  async findOne(id: string, currentUserId: string): Promise<UserReadDto> {
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(currentUserId);
 
-    if (!user) {
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
       throw new NotFoundException("Usuario no encontrado");
     }
 
-    return user;
+    const assignmentWhere = buildVisibleAssignmentWhere(accessibleProjectIds);
+    const user = await this.prisma.user.findUnique({
+      select: {
+        ...userReadSelect,
+        projectAssignments: {
+          where: assignmentWhere,
+          select: userReadSelect.projectAssignments.select,
+        },
+      },
+      where: { id },
+    });
+
+    if (
+      !user ||
+      (accessibleProjectIds &&
+        accessibleProjectIds.length > 0 &&
+        user.projectAssignments.length === 0)
+    ) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    return toUserReadDto(user);
+  }
+
+  async updateRoles(
+    targetUserId: string,
+    assignUserRolesDto: AssignUserRolesDto,
+    actorUserId: string,
+    audit: AuditRequestContext,
+  ): Promise<UserReadDto> {
+    const assignments = normalizeRoleAssignments(
+      assignUserRolesDto.assignments,
+    );
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(actorUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      throw new ForbiddenException("No tiene proyectos disponibles.");
+    }
+
+    await this.validateRoleAssignmentScope(assignments, accessibleProjectIds);
+    await this.validateAssignableRoles(assignments, actorUserId);
+
+    const assignmentScope = buildVisibleAssignmentWhere(accessibleProjectIds);
+    const oldAssignments = await this.findUserRoleAssignments(
+      targetUserId,
+      assignmentScope,
+    );
+
+    if (
+      accessibleProjectIds &&
+      oldAssignments.length === 0 &&
+      assignments.length === 0
+    ) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    if (targetUserId === actorUserId) {
+      await this.ensureSelfKeepsAdministrativeRole(
+        targetUserId,
+        assignments,
+        accessibleProjectIds,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const desiredKeys = new Set(
+        assignments.map((assignment) => assignmentKey(assignment)),
+      );
+      const existingAssignments = await tx.projectUser.findMany({
+        where: {
+          userId: targetUserId,
+          projectId: accessibleProjectIds
+            ? {
+                in: accessibleProjectIds,
+              }
+            : undefined,
+        },
+        select: {
+          id: true,
+          projectId: true,
+          roleId: true,
+          status: true,
+        },
+      });
+
+      await Promise.all(
+        existingAssignments
+          .filter((assignment) => !desiredKeys.has(assignmentKey(assignment)))
+          .filter((assignment) => assignment.status === RecordStatus.ACTIVE)
+          .map((assignment) =>
+            tx.projectUser.update({
+              where: { id: assignment.id },
+              data: {
+                status: RecordStatus.INACTIVE,
+              },
+            }),
+          ),
+      );
+
+      for (const assignment of assignments) {
+        const existingAssignment = existingAssignments.find(
+          (candidate) => assignmentKey(candidate) === assignmentKey(assignment),
+        );
+
+        if (existingAssignment) {
+          if (existingAssignment.status !== RecordStatus.ACTIVE) {
+            await tx.projectUser.update({
+              where: { id: existingAssignment.id },
+              data: {
+                assignedAt: new Date(),
+                assignedById: actorUserId,
+                status: RecordStatus.ACTIVE,
+              },
+            });
+          }
+
+          continue;
+        }
+
+        await tx.projectUser.create({
+          data: {
+            assignedById: actorUserId,
+            projectId: assignment.projectId,
+            roleId: assignment.roleId,
+            userId: targetUserId,
+            status: RecordStatus.ACTIVE,
+          },
+        });
+      }
+    });
+
+    const newAssignments = await this.findUserRoleAssignments(
+      targetUserId,
+      assignmentScope,
+    );
+
+    await this.auditService.record({
+      ...audit,
+      action: "UPDATE",
+      entity: "User",
+      entityId: targetUserId,
+      oldValue: {
+        roles: oldAssignments,
+      },
+      newValue: {
+        roles: newAssignments,
+      },
+    });
+
+    return this.findOne(targetUserId, actorUserId);
   }
 
   async create(createUserDto: CreateUserDto) {
@@ -337,6 +579,272 @@ export class UsersService {
     return password ? bcrypt.hash(password, 10) : undefined;
   }
 
+  private async validateRoleAssignmentScope(
+    assignments: NormalizedRoleAssignment[],
+    accessibleProjectIds: string[] | null,
+  ) {
+    const projectIds = [...new Set(assignments.map(({ projectId }) => projectId))];
+
+    if (projectIds.length === 0) {
+      return;
+    }
+
+    if (accessibleProjectIds) {
+      const inaccessibleProjectId = projectIds.find(
+        (projectId) => !accessibleProjectIds.includes(projectId),
+      );
+
+      if (inaccessibleProjectId) {
+        throw new ForbiddenException(
+          "No puede asignar roles fuera de sus proyectos.",
+        );
+      }
+    }
+
+    const projects = await this.prisma.project.findMany({
+      where: {
+        id: {
+          in: projectIds,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (projects.length !== projectIds.length) {
+      throw new BadRequestException("Uno o mas proyectos no existen.");
+    }
+  }
+
+  private async validateAssignableRoles(
+    assignments: NormalizedRoleAssignment[],
+    actorUserId: string,
+  ) {
+    const roleIds = [...new Set(assignments.map(({ roleId }) => roleId))];
+
+    if (roleIds.length === 0) {
+      return;
+    }
+
+    const roles = await this.prisma.role.findMany({
+      where: {
+        id: {
+          in: roleIds,
+        },
+        status: RecordStatus.ACTIVE,
+      },
+      select: {
+        id: true,
+        rolePermissions: {
+          where: {
+            permission: {
+              status: RecordStatus.ACTIVE,
+            },
+          },
+          select: {
+            permission: {
+              select: {
+                code: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (roles.length !== roleIds.length) {
+      throw new BadRequestException("Uno o mas roles no existen o estan inactivos.");
+    }
+
+    const actorPermissions = await this.getUserPermissionCodes(actorUserId);
+    const missingPermission = roles
+      .flatMap((role) =>
+        role.rolePermissions.map(
+          (rolePermission) => rolePermission.permission.code,
+        ),
+      )
+      .find((permissionCode) => !actorPermissions.has(permissionCode));
+
+    if (missingPermission) {
+      throw new ForbiddenException(
+        "No puede asignar roles con privilegios superiores a su alcance.",
+      );
+    }
+  }
+
+  private async ensureSelfKeepsAdministrativeRole(
+    targetUserId: string,
+    assignments: NormalizedRoleAssignment[],
+    accessibleProjectIds: string[] | null,
+  ) {
+    const currentAssignments = await this.prisma.projectUser.findMany({
+      where: {
+        userId: targetUserId,
+        status: RecordStatus.ACTIVE,
+      },
+      select: {
+        projectId: true,
+        roleId: true,
+        role: {
+          select: {
+            rolePermissions: {
+              where: {
+                permission: {
+                  status: RecordStatus.ACTIVE,
+                },
+              },
+              select: {
+                permission: {
+                  select: {
+                    code: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const currentlyHasAdmin = currentAssignments.some((assignment) =>
+      roleHasAdminPermission(assignment.role),
+    );
+
+    if (!currentlyHasAdmin) {
+      return;
+    }
+
+    const scopedProjectIds = accessibleProjectIds
+      ? new Set(accessibleProjectIds)
+      : null;
+    const replacementKeys = new Set(assignments.map(assignmentKey));
+    const remainingExistingAssignments = currentAssignments.filter(
+      (assignment) =>
+        scopedProjectIds && !scopedProjectIds.has(assignment.projectId),
+    );
+    const replacementRoleIds = [...new Set(assignments.map(({ roleId }) => roleId))];
+    const replacementRoles = replacementRoleIds.length
+      ? await this.prisma.role.findMany({
+          where: {
+            id: {
+              in: replacementRoleIds,
+            },
+          },
+          select: {
+            id: true,
+            rolePermissions: {
+              where: {
+                permission: {
+                  status: RecordStatus.ACTIVE,
+                },
+              },
+              select: {
+                permission: {
+                  select: {
+                    code: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+      : [];
+    const roleById = new Map(replacementRoles.map((role) => [role.id, role]));
+    const replacementAssignments = assignments
+      .filter((assignment) => replacementKeys.has(assignmentKey(assignment)))
+      .map((assignment) => roleById.get(assignment.roleId))
+      .filter((role): role is NonNullable<typeof role> => Boolean(role));
+    const willKeepAdmin =
+      remainingExistingAssignments.some((assignment) =>
+        roleHasAdminPermission(assignment.role),
+      ) || replacementAssignments.some(roleHasAdminPermission);
+
+    if (!willKeepAdmin) {
+      throw new ConflictException(
+        "No puede quitarse a si mismo su ultimo rol administrativo.",
+      );
+    }
+  }
+
+  private async findUserRoleAssignments(
+    userId: string,
+    assignmentScope: Prisma.ProjectUserWhereInput,
+  ) {
+    const assignments = await this.prisma.projectUser.findMany({
+      where: {
+        userId,
+        ...assignmentScope,
+        status: RecordStatus.ACTIVE,
+      },
+      select: {
+        projectId: true,
+        roleId: true,
+        role: {
+          select: {
+            code: true,
+            name: true,
+          },
+        },
+        project: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        assignedAt: "asc",
+      },
+    });
+
+    return assignments.map((assignment) => ({
+      projectId: assignment.projectId,
+      projectName: assignment.project.name,
+      roleId: assignment.roleId,
+      roleCode: assignment.role.code,
+      roleName: assignment.role.name,
+    }));
+  }
+
+  private async getUserPermissionCodes(userId: string) {
+    const assignments = await this.prisma.projectUser.findMany({
+      where: {
+        userId,
+        status: RecordStatus.ACTIVE,
+        role: {
+          status: RecordStatus.ACTIVE,
+        },
+      },
+      select: {
+        role: {
+          select: {
+            rolePermissions: {
+              where: {
+                permission: {
+                  status: RecordStatus.ACTIVE,
+                },
+              },
+              select: {
+                permission: {
+                  select: {
+                    code: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return new Set(
+      assignments.flatMap((assignment) =>
+        assignment.role.rolePermissions.map(
+          (rolePermission) => rolePermission.permission.code,
+        ),
+      ),
+    );
+  }
+
   private handlePrismaError(error: unknown): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2002") {
@@ -387,6 +895,187 @@ function sanitizeSignatureFileName(fileName: string) {
   const safeName = (nameWithoutExtension || "firma-usuario").slice(0, 120);
 
   return `${safeName}${extension}`.slice(0, 150);
+}
+
+function buildUserReadWhere(
+  filters: UserFilters,
+  accessibleProjectIds: string[] | null,
+): Prisma.UserWhereInput {
+  const search = filters.search?.trim();
+
+  return {
+    status: filters.status,
+    email: filters.email
+      ? {
+          contains: filters.email,
+          mode: "insensitive",
+        }
+      : undefined,
+    fullName: filters.fullName
+      ? {
+          contains: filters.fullName,
+          mode: "insensitive",
+        }
+      : undefined,
+    documentNumber: filters.documentNumber
+      ? {
+          contains: filters.documentNumber,
+          mode: "insensitive",
+        }
+      : undefined,
+    OR: search
+      ? [
+          {
+            fullName: {
+              contains: search,
+              mode: "insensitive",
+            },
+          },
+          {
+            email: {
+              contains: search,
+              mode: "insensitive",
+            },
+          },
+        ]
+      : undefined,
+    projectAssignments: accessibleProjectIds
+      ? {
+          some: {
+            projectId: {
+              in: accessibleProjectIds,
+            },
+            status: RecordStatus.ACTIVE,
+          },
+        }
+      : undefined,
+  };
+}
+
+function buildVisibleAssignmentWhere(
+  accessibleProjectIds: string[] | null,
+): Prisma.ProjectUserWhereInput {
+  return {
+    status: RecordStatus.ACTIVE,
+    projectId: accessibleProjectIds
+      ? {
+          in: accessibleProjectIds,
+        }
+      : undefined,
+  };
+}
+
+function parsePagination(page?: string, limit?: string) {
+  const parsedPage = Number(page);
+  const parsedLimit = Number(limit);
+  const safePage =
+    Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+  const safeLimit =
+    Number.isInteger(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, 100)
+      : 20;
+
+  return {
+    page: safePage,
+    limit: safeLimit,
+  };
+}
+
+function normalizeRoleAssignments(
+  assignments: NormalizedRoleAssignment[] | undefined,
+) {
+  if (!assignments) {
+    throw new BadRequestException("Debe enviar assignments.");
+  }
+
+  const seenAssignments = new Set<string>();
+  const normalizedAssignments: NormalizedRoleAssignment[] = [];
+
+  for (const assignment of assignments) {
+    const normalizedAssignment = {
+      projectId: assignment.projectId,
+      roleId: assignment.roleId,
+    };
+    const key = assignmentKey(normalizedAssignment);
+
+    if (seenAssignments.has(key)) {
+      continue;
+    }
+
+    seenAssignments.add(key);
+    normalizedAssignments.push(normalizedAssignment);
+  }
+
+  return normalizedAssignments;
+}
+
+function assignmentKey(assignment: { projectId: string; roleId: string }) {
+  return `${assignment.projectId}:${assignment.roleId}`;
+}
+
+function roleHasAdminPermission(role: {
+  rolePermissions: Array<{
+    permission: {
+      code: string;
+    };
+  }>;
+}) {
+  return role.rolePermissions.some((rolePermission) =>
+    ADMIN_PERMISSION_CODES.includes(rolePermission.permission.code),
+  );
+}
+
+function toUserReadDto(user: UserReadRecord): UserReadDto {
+  const projectById = new Map<string, UserReadDto["projects"][number]>();
+  const organizationById = new Map<
+    string,
+    NonNullable<UserReadDto["organization"]>
+  >();
+  const roleByKey = new Map<string, UserReadDto["roles"][number]>();
+
+  for (const assignment of user.projectAssignments) {
+    const project = assignment.project;
+    const organization = project.organization;
+
+    projectById.set(project.id, {
+      id: project.id,
+      code: project.code,
+      name: project.name,
+      status: project.status,
+      organization: {
+        id: organization.id,
+        name: organization.name,
+      },
+    });
+    organizationById.set(organization.id, {
+      id: organization.id,
+      name: organization.name,
+    });
+    roleByKey.set(`${assignment.role.id}:${project.id}`, {
+      id: assignment.role.id,
+      code: assignment.role.code,
+      name: assignment.role.name,
+      projectId: project.id,
+      projectName: project.name,
+    });
+  }
+
+  const organizations = [...organizationById.values()];
+
+  return {
+    id: user.id,
+    name: user.fullName,
+    fullName: user.fullName,
+    email: user.email,
+    status: user.status,
+    isActive: user.status === RecordStatus.ACTIVE,
+    roles: [...roleByKey.values()],
+    organization: organizations[0] ?? null,
+    organizations,
+    projects: [...projectById.values()],
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+  };
 }
 
 async function safeUnlink(filePath: string) {

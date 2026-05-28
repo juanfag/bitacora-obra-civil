@@ -20,6 +20,7 @@ import {
 import { OrganizationsModule } from "./organizations/organizations.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { ProjectsModule } from "./projects/projects.module";
+import { RolesModule } from "./roles/roles.module";
 import { uploadConfig } from "./uploads/upload.config";
 import { createMulterFileFilter } from "./uploads/upload.validators";
 import { UsersModule } from "./users/users.module";
@@ -69,6 +70,7 @@ import { UsersModule } from "./users/users.module";
     HealthModule,
     OrganizationsModule,
     ProjectsModule,
+    RolesModule,
     UsersModule,
   ],
 })

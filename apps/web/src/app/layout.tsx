@@ -6,6 +6,7 @@ const navigation = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/projects", label: "Proyectos" },
   { href: "/daily-logs", label: "Bitacoras" },
+  { href: "/users", label: "Usuarios" },
 ];
 
 export const metadata: Metadata = {
