@@ -4,7 +4,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { RecordStatus } from "@prisma/client";
+import { UserStatus } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
 import { LoginDto } from "./dto/login.dto";
@@ -26,6 +26,7 @@ export class AuthService {
         fullName: true,
         email: true,
         status: true,
+        tokenVersion: true,
         passwordHash: true,
       },
     });
@@ -34,7 +35,7 @@ export class AuthService {
       throw new UnauthorizedException("Email o password invalidos.");
     }
 
-    if (user.status !== RecordStatus.ACTIVE) {
+    if (user.status !== UserStatus.ACTIVE) {
       throw new ForbiddenException("Usuario inactivo.");
     }
 
@@ -52,6 +53,7 @@ export class AuthService {
       email: user.email,
       fullName: user.fullName,
       status: user.status,
+      tokenVersion: user.tokenVersion,
     };
 
     return {

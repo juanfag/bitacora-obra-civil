@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { RecordStatus } from "@prisma/client";
+import { UserStatus } from "@prisma/client";
 import { Transform } from "class-transformer";
 import {
   IsEmail,
@@ -41,10 +41,10 @@ export class CreateUserDto {
   @IsOptional()
   documentNumber?: string;
 
-  @ApiPropertyOptional({ enum: RecordStatus, example: RecordStatus.ACTIVE })
-  @IsEnum(RecordStatus)
+  @ApiPropertyOptional({ enum: UserStatus, example: UserStatus.ACTIVE })
+  @IsEnum(UserStatus)
   @IsOptional()
-  status?: RecordStatus;
+  status?: UserStatus;
 
   @ApiPropertyOptional({
     example: "Password123!",

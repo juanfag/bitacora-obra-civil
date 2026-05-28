@@ -14,6 +14,15 @@ enum RecordStatus {
   @@map("record_status")
 }
 
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BLOCKED
+  PENDING_ACTIVATION
+
+  @@map("user_status")
+}
+
 enum AttachmentRequirement {
   REQUIRED
   OPTIONAL
@@ -151,22 +160,26 @@ model Organization {
 }
 
 model User {
-  id             String       @id @default(uuid()) @db.Uuid
-  fullName       String       @map("full_name") @db.VarChar(200)
-  email          String       @unique(map: "uq_users_email") @db.VarChar(150)
-  phone          String?      @db.VarChar(50)
-  documentType   String?      @map("document_type") @db.VarChar(30)
-  documentNumber String?      @map("document_number") @db.VarChar(50)
-  passwordHash   String?      @map("password_hash")
-  signatureFileName String?   @map("signature_file_name") @db.VarChar(250)
-  signatureMimeType String?   @map("signature_mime_type") @db.VarChar(120)
-  signatureFileSize BigInt?   @map("signature_file_size")
-  signatureFileHash String?   @map("signature_file_hash") @db.Char(64)
-  signatureFileUrl  String?   @map("signature_file_url")
-  signatureUploadedAt DateTime? @map("signature_uploaded_at") @db.Timestamp(6)
-  status         RecordStatus @default(ACTIVE)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  id                  String     @id @default(uuid()) @db.Uuid
+  fullName            String     @map("full_name") @db.VarChar(200)
+  email               String     @unique(map: "uq_users_email") @db.VarChar(150)
+  phone               String?    @db.VarChar(50)
+  documentType        String?    @map("document_type") @db.VarChar(30)
+  documentNumber      String?    @map("document_number") @db.VarChar(50)
+  passwordHash        String?    @map("password_hash")
+  signatureFileName   String?    @map("signature_file_name") @db.VarChar(250)
+  signatureMimeType   String?    @map("signature_mime_type") @db.VarChar(120)
+  signatureFileSize   BigInt?    @map("signature_file_size")
+  signatureFileHash   String?    @map("signature_file_hash") @db.Char(64)
+  signatureFileUrl    String?    @map("signature_file_url")
+  signatureUploadedAt DateTime?  @map("signature_uploaded_at") @db.Timestamp(6)
+  status              UserStatus @default(ACTIVE)
+  statusChangedAt     DateTime?  @map("status_changed_at") @db.Timestamp(6)
+  statusChangedById   String?    @map("status_changed_by") @db.Uuid
+  blockedReason       String?    @map("blocked_reason")
+  tokenVersion        Int        @default(0) @map("token_version")
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
   createdProjects        Project[]               @relation("ProjectCreatedBy")
   updatedProjects        Project[]               @relation("ProjectUpdatedBy")

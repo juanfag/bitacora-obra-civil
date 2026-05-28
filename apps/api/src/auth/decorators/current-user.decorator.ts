@@ -9,6 +9,7 @@ export type CurrentUserPayload = {
   email: string;
   fullName: string;
   status: string;
+  tokenVersion: number;
 };
 
 export const CurrentUser = createParamDecorator(

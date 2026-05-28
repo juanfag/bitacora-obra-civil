@@ -17,6 +17,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiConflictResponse,
   ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
@@ -25,7 +26,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
-import { RecordStatus } from "@prisma/client";
+import { UserStatus } from "@prisma/client";
 import { AuditRequestContext } from "../audit/audit.types";
 import { AuditContext } from "../audit/decorators/audit-context.decorator";
 import {
@@ -39,6 +40,7 @@ import { UploadedFile } from "../uploads/upload-file.types";
 import { validateUploadFileMagicBytes } from "../uploads/upload.validators";
 import { AssignUserRolesDto } from "./dto/assign-user-roles.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import {
   UserReadDto,
@@ -127,7 +129,7 @@ export class UsersController {
   })
   @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
   @ApiForbiddenResponse({ description: "Insufficient permissions." })
-  @ApiQuery({ name: "status", enum: RecordStatus, required: false })
+  @ApiQuery({ name: "status", enum: UserStatus, required: false })
   @ApiQuery({ name: "email", required: false })
   @ApiQuery({ name: "fullName", required: false })
   @ApiQuery({ name: "documentNumber", required: false })
@@ -138,7 +140,7 @@ export class UsersController {
   @Permissions("users:read", "organizations:read")
   findAll(
     @CurrentUser() user: CurrentUserPayload,
-    @Query("status") status?: RecordStatus,
+    @Query("status") status?: UserStatus,
     @Query("email") email?: string,
     @Query("fullName") fullName?: string,
     @Query("documentNumber") documentNumber?: string,
@@ -196,6 +198,44 @@ export class UsersController {
       ...audit,
       actorId: user.sub,
     });
+  }
+
+  @Patch(":id/status")
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Update user status" })
+  @ApiOkResponse({
+    description: "User status updated.",
+    type: UserReadDto,
+  })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @ApiConflictResponse({
+    description:
+      "The status change is not allowed because it would remove the last active administrator.",
+  })
+  @ApiParam({ name: "id", description: "User UUID" })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions(
+    "users:update",
+    "users:manage",
+    "organizations:update",
+    "organizations:create",
+  )
+  updateStatus(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param("id") id: string,
+    @Body() updateUserStatusDto: UpdateUserStatusDto,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.usersService.updateStatus(
+      id,
+      updateUserStatusDto,
+      user.sub,
+      {
+        ...audit,
+        actorId: user.sub,
+      },
+    );
   }
 
   @Post()

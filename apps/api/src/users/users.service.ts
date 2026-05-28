@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma, RecordStatus } from "@prisma/client";
+import { Prisma, RecordStatus, UserStatus } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { createHash } from "node:crypto";
 import { basename, extname } from "node:path";
@@ -17,6 +17,7 @@ import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { UploadedFile } from "../uploads/upload-file.types";
 import { AssignUserRolesDto } from "./dto/assign-user-roles.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import {
   UserReadDto,
@@ -25,7 +26,7 @@ import {
 
 type UserFilters = {
   currentUserId: string;
-  status?: RecordStatus;
+  status?: UserStatus;
   email?: string;
   fullName?: string;
   documentNumber?: string;
@@ -343,6 +344,108 @@ export class UsersService {
     return this.findOne(targetUserId, actorUserId);
   }
 
+  async updateStatus(
+    targetUserId: string,
+    updateUserStatusDto: UpdateUserStatusDto,
+    actorUserId: string,
+    audit: AuditRequestContext,
+  ): Promise<UserReadDto> {
+    if (targetUserId === actorUserId) {
+      throw new ConflictException("No puede cambiar su propio estado.");
+    }
+
+    this.validateStatus(updateUserStatusDto.status);
+
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(actorUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      throw new ForbiddenException("No tiene proyectos disponibles.");
+    }
+
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        status: true,
+        blockedReason: true,
+        projectAssignments: {
+          where: {
+            status: RecordStatus.ACTIVE,
+            projectId: accessibleProjectIds
+              ? {
+                  in: accessibleProjectIds,
+                }
+              : undefined,
+          },
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    if (accessibleProjectIds && targetUser.projectAssignments.length === 0) {
+      throw new ForbiddenException("No puede administrar este usuario.");
+    }
+
+    if (
+      targetUser.status === UserStatus.ACTIVE &&
+      isNonActiveUserStatus(updateUserStatusDto.status)
+    ) {
+      await this.ensureNotLastActiveSuperAdmin(targetUserId);
+      await this.ensureNotLastActiveOrganizationAdmin(targetUserId);
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        status: updateUserStatusDto.status,
+        statusChangedAt: new Date(),
+        statusChangedById: actorUserId,
+        blockedReason:
+          updateUserStatusDto.status === UserStatus.BLOCKED
+            ? updateUserStatusDto.reason ?? null
+            : null,
+        tokenVersion: {
+          increment: 1,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        blockedReason: true,
+        statusChangedAt: true,
+        statusChangedById: true,
+        tokenVersion: true,
+      },
+    });
+
+    await this.auditService.record({
+      ...audit,
+      action: "UPDATE",
+      entity: "User",
+      entityId: targetUserId,
+      oldValue: {
+        status: targetUser.status,
+        blockedReason: targetUser.blockedReason,
+      },
+      newValue: {
+        status: updatedUser.status,
+        blockedReason: updatedUser.blockedReason,
+        statusChangedAt: updatedUser.statusChangedAt,
+        statusChangedById: updatedUser.statusChangedById,
+        tokenVersion: updatedUser.tokenVersion,
+      },
+    });
+
+    return this.findOne(targetUserId, actorUserId);
+  }
+
   async create(createUserDto: CreateUserDto) {
     try {
       return await this.prisma.user.create({
@@ -390,7 +493,7 @@ export class UsersService {
       select: userSelect,
       where: { id },
       data: {
-        status: RecordStatus.INACTIVE,
+        status: UserStatus.INACTIVE,
       },
     });
   }
@@ -569,8 +672,8 @@ export class UsersService {
     }
   }
 
-  private validateStatus(status?: RecordStatus) {
-    if (status && !Object.values(RecordStatus).includes(status)) {
+  private validateStatus(status?: UserStatus) {
+    if (status && !Object.values(UserStatus).includes(status)) {
       throw new BadRequestException("Estado de usuario invalido");
     }
   }
@@ -763,6 +866,119 @@ export class UsersService {
       throw new ConflictException(
         "No puede quitarse a si mismo su ultimo rol administrativo.",
       );
+    }
+  }
+
+  private async ensureNotLastActiveSuperAdmin(targetUserId: string) {
+    const targetHasSuperAdmin = await this.prisma.projectUser.findFirst({
+      where: {
+        userId: targetUserId,
+        status: RecordStatus.ACTIVE,
+        role: {
+          code: "SUPER_ADMIN",
+          status: RecordStatus.ACTIVE,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!targetHasSuperAdmin) {
+      return;
+    }
+
+    const activeSuperAdmins = await this.prisma.user.count({
+      where: {
+        status: UserStatus.ACTIVE,
+        projectAssignments: {
+          some: {
+            status: RecordStatus.ACTIVE,
+            role: {
+              code: "SUPER_ADMIN",
+              status: RecordStatus.ACTIVE,
+            },
+          },
+        },
+      },
+    });
+
+    if (activeSuperAdmins <= 1) {
+      throw new ConflictException(
+        "No puede desactivar o bloquear el ultimo SUPER_ADMIN activo.",
+      );
+    }
+  }
+
+  private async ensureNotLastActiveOrganizationAdmin(targetUserId: string) {
+    const targetAdminOrganizations = await this.prisma.organization.findMany({
+      where: {
+        projects: {
+          some: {
+            projectUsers: {
+              some: {
+                userId: targetUserId,
+                status: RecordStatus.ACTIVE,
+                role: {
+                  status: RecordStatus.ACTIVE,
+                  rolePermissions: {
+                    some: {
+                      permission: {
+                        code: {
+                          in: ADMIN_PERMISSION_CODES,
+                        },
+                        status: RecordStatus.ACTIVE,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (targetAdminOrganizations.length === 0) {
+      return;
+    }
+
+    for (const organization of targetAdminOrganizations) {
+      const activeAdmins = await this.prisma.user.count({
+        where: {
+          status: UserStatus.ACTIVE,
+          projectAssignments: {
+            some: {
+              status: RecordStatus.ACTIVE,
+              project: {
+                organizationId: organization.id,
+              },
+              role: {
+                status: RecordStatus.ACTIVE,
+                rolePermissions: {
+                  some: {
+                    permission: {
+                      code: {
+                        in: ADMIN_PERMISSION_CODES,
+                      },
+                      status: RecordStatus.ACTIVE,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (activeAdmins <= 1) {
+        throw new ConflictException(
+          "No puede desactivar o bloquear el ultimo administrador activo de una organizacion.",
+        );
+      }
     }
   }
 
@@ -1025,6 +1241,10 @@ function roleHasAdminPermission(role: {
   );
 }
 
+function isNonActiveUserStatus(status: UserStatus) {
+  return status !== UserStatus.ACTIVE;
+}
+
 function toUserReadDto(user: UserReadRecord): UserReadDto {
   const projectById = new Map<string, UserReadDto["projects"][number]>();
   const organizationById = new Map<
@@ -1068,7 +1288,7 @@ function toUserReadDto(user: UserReadRecord): UserReadDto {
     fullName: user.fullName,
     email: user.email,
     status: user.status,
-    isActive: user.status === RecordStatus.ACTIVE,
+    isActive: user.status === UserStatus.ACTIVE,
     roles: [...roleByKey.values()],
     organization: organizations[0] ?? null,
     organizations,
