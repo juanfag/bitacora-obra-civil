@@ -126,9 +126,17 @@ export default function ProjectsPage() {
                 <p className="muted">
                   Revisa y gestiona las bitacoras de este proyecto.
                 </p>
-                <Link className="button" href={`/daily-logs?projectId=${project.id}`}>
-                  Ver bitacoras
-                </Link>
+                <div className="toolbar">
+                  <Link className="button" href={`/daily-logs?projectId=${project.id}`}>
+                    Ver bitacoras
+                  </Link>
+                  <Link
+                    className="button secondary"
+                    href={`/projects/${project.id}/documents`}
+                  >
+                    Documentos
+                  </Link>
+                </div>
               </article>
             ))}
           </div>

@@ -10,6 +10,7 @@ import { AuthModule } from "./auth/auth.module";
 import { DailyLogsModule } from "./daily-logs/daily-logs.module";
 import { DailyLogEventsModule } from "./daily-log-events/daily-log-events.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
+import { DocumentsModule } from "./documents/documents.module";
 import { EventTypesModule } from "./event-types/event-types.module";
 import { EventsModule } from "./events/events.module";
 import { HealthModule } from "./health/health.module";
@@ -65,6 +66,7 @@ import { UsersModule } from "./users/users.module";
     DashboardModule,
     DailyLogEventsModule,
     DailyLogsModule,
+    DocumentsModule,
     EventTypesModule,
     EventsModule,
     HealthModule,

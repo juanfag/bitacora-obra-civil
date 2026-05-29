@@ -8,6 +8,7 @@ import {
   DailyLogDocumentRole,
   DailyLogSignatureType,
   DailyLogStatus,
+  DocumentType,
   DocumentStorageProvider,
   PdfVersionStatus,
   Prisma,
@@ -348,7 +349,7 @@ export class DailyLogPdfService {
   private async resolveVerificationData(dailyLog: DailyLogForPdf) {
     if (dailyLog.status === DailyLogStatus.CLOSED) {
       const snapshot = await this.findFinalSnapshot(dailyLog.id);
-      const snapshotHash = snapshot?.document.fileHash;
+      const snapshotHash = snapshot?.document.checksumSha256;
 
       if (snapshotHash) {
         return buildVerificationDataFromHash(dailyLog, snapshotHash);
@@ -394,7 +395,7 @@ export class DailyLogPdfService {
       throw new NotFoundException("Daily log PDF snapshot not found");
     }
 
-    const filePath = resolveSnapshotPath(snapshot.document.fileUrl);
+    const filePath = resolveSnapshotPath(snapshot.document.storagePath);
 
     try {
       await access(filePath, constants.R_OK);
@@ -421,7 +422,7 @@ export class DailyLogPdfService {
       return;
     }
 
-    const documentType = await this.prisma.documentType.upsert({
+    const documentType = await this.prisma.documentTypeCatalog.upsert({
       where: {
         code: "GENERATED_DAILY_LOG_PDF",
       },
@@ -455,7 +456,10 @@ export class DailyLogPdfService {
       const document = await this.prisma.document.create({
         data: {
           projectId: dailyLog.projectId,
+          organizationId: dailyLog.project.organizationId,
           documentTypeId: documentType.id,
+          type: DocumentType.OTRO,
+          dailyLogId: dailyLog.id,
           uploadedById: generatedBy.sub,
           title: `Snapshot final bitacora ${formatDateForFileName(
             dailyLog.logDate,
@@ -463,11 +467,11 @@ export class DailyLogPdfService {
           description:
             "Snapshot documental final generado al cerrar la bitacora diaria.",
           fileName,
-          fileUrl: storagePath,
+          storagePath,
           storageProvider: DocumentStorageProvider.LOCAL,
           mimeType: "application/pdf",
-          fileSize: BigInt(pdf.buffer.length),
-          fileHash: verification.hash,
+          sizeBytes: BigInt(pdf.buffer.length),
+          checksumSha256: verification.hash,
           dailyLogDocuments: {
             create: {
               dailyLogId: dailyLog.id,
@@ -593,7 +597,7 @@ export class DailyLogPdfService {
       message: string;
     },
   ) {
-    const hash = snapshot?.document.fileHash ?? null;
+    const hash = snapshot?.document.checksumSha256 ?? null;
     const verification = hash
       ? buildVerificationDataFromHash(dailyLog, hash)
       : await this.resolveVerificationData(dailyLog);
@@ -610,8 +614,8 @@ export class DailyLogPdfService {
       documentId: snapshot?.documentId ?? null,
       fileName: snapshot?.document.fileName ?? null,
       mimeType: snapshot?.document.mimeType ?? null,
-      fileSize: snapshot?.document.fileSize
-        ? Number(snapshot.document.fileSize)
+      fileSize: snapshot?.document.sizeBytes
+        ? Number(snapshot.document.sizeBytes)
         : null,
       generatedAt: snapshot?.generatedAt?.toISOString() ?? null,
       generatedBy: snapshot?.generatedBy

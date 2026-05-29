@@ -237,6 +237,70 @@ export type DashboardRecentActivity = {
   items: DashboardRecentActivityItem[];
 };
 
+export type DocumentType =
+  | "PLANO"
+  | "SOLICITUD_SUSPENSION"
+  | "DENUNCIA"
+  | "DEMANDA"
+  | "ACTA"
+  | "SOPORTE_FOTOGRAFICO"
+  | "CONTRATO"
+  | "OTRO";
+
+export type DocumentStatus = "ACTIVE" | "ARCHIVED" | "DELETED";
+
+export type ControlledDocument = {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  dailyLogId: string | null;
+  eventId: string | null;
+  type: DocumentType;
+  title: string;
+  description: string | null;
+  fileName: string;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  status: DocumentStatus;
+  metadata: Record<string, unknown> | null;
+  uploadedById: string;
+  uploadedBy: {
+    id: string;
+    fullName: string;
+    email: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+export type DocumentsResponse = {
+  items: ControlledDocument[];
+  meta: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+export type DocumentFilters = {
+  projectId?: string;
+  dailyLogId?: string;
+  eventId?: string;
+  type?: DocumentType | "";
+  status?: DocumentStatus | "";
+  page?: number;
+  limit?: number;
+};
+
+export type UpdateDocumentInput = {
+  title?: string;
+  description?: string | null;
+  type?: DocumentType;
+  status?: DocumentStatus;
+};
+
 export function getDashboardMetrics() {
   return apiRequest<DashboardMetrics>("/dashboard/metrics");
 }
@@ -287,6 +351,103 @@ export function getProjects(params: { status?: string } = {}) {
   return apiRequest<ProjectSummary[]>(
     `/projects${query ? `?${query}` : ""}`,
   );
+}
+
+export function getProject(projectId: string) {
+  return apiRequest<ProjectSummary>(`/projects/${encodeURIComponent(projectId)}`);
+}
+
+export function getDocuments(filters: DocumentFilters = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (filters.projectId) {
+    searchParams.set("projectId", filters.projectId);
+  }
+
+  if (filters.dailyLogId) {
+    searchParams.set("dailyLogId", filters.dailyLogId);
+  }
+
+  if (filters.eventId) {
+    searchParams.set("eventId", filters.eventId);
+  }
+
+  if (filters.type) {
+    searchParams.set("type", filters.type);
+  }
+
+  if (filters.status) {
+    searchParams.set("status", filters.status);
+  }
+
+  if (filters.page) {
+    searchParams.set("page", String(filters.page));
+  }
+
+  if (filters.limit) {
+    searchParams.set("limit", String(filters.limit));
+  }
+
+  const query = searchParams.toString();
+
+  return apiRequest<DocumentsResponse>(
+    `/documents${query ? `?${query}` : ""}`,
+  );
+}
+
+export function uploadDocument(body: FormData) {
+  return apiRequest<ControlledDocument>("/documents/upload", {
+    method: "POST",
+    body,
+  });
+}
+
+export function updateDocument(id: string, payload: UpdateDocumentInput) {
+  return apiRequest<ControlledDocument>(`/documents/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteDocument(id: string) {
+  return apiRequest<ControlledDocument>(`/documents/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function downloadDocument(id: string) {
+  const token =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("bitacora.accessToken")
+      : null;
+  const response = await fetch(
+    `${apiBaseUrl}/documents/${encodeURIComponent(id)}/download`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type");
+    const body = contentType?.includes("application/json")
+      ? await response.json()
+      : await response.text();
+
+    throw new ApiClientError(
+      getApiErrorMessage(body, response.status),
+      response.status,
+      body,
+    );
+  }
+
+  return {
+    blob: await response.blob(),
+    fileName: getFileNameFromContentDisposition(
+      response.headers.get("content-disposition"),
+    ),
+  };
 }
 
 export function updateUserRoles(

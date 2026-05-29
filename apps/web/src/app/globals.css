@@ -508,6 +508,54 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.documents-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.documents-filters {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(180px, 1fr)) auto;
+}
+
+.documents-filters label {
+  display: grid;
+  gap: 6px;
+}
+
+.documents-form {
+  max-width: none;
+}
+
+.documents-list-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.documents-list {
+  display: grid;
+  gap: 12px;
+}
+
+.document-card {
+  display: grid;
+  gap: 12px;
+}
+
+.document-card h3,
+.document-card p {
+  margin-bottom: 0;
+}
+
+.document-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
 .signature-card {
   display: grid;
   gap: 12px;

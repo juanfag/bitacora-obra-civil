@@ -173,6 +173,26 @@ const permissions = [
     name: "Delete attachments",
     description: "Allows soft deleting attachments.",
   },
+  {
+    code: "documents:create",
+    name: "Create documents",
+    description: "Allows creating document-control records.",
+  },
+  {
+    code: "documents:read",
+    name: "Read documents",
+    description: "Allows reading document-control records.",
+  },
+  {
+    code: "documents:update",
+    name: "Update documents",
+    description: "Allows updating document-control records.",
+  },
+  {
+    code: "documents:delete",
+    name: "Delete documents",
+    description: "Allows soft deleting document-control records.",
+  },
 ];
 
 const rolePermissions: Record<string, string[]> = {
@@ -203,6 +223,10 @@ const rolePermissions: Record<string, string[]> = {
     "attachments:create",
     "attachments:read",
     "attachments:delete",
+    "documents:create",
+    "documents:read",
+    "documents:update",
+    "documents:delete",
   ],
   SUPERVISOR: [
     "organizations:read",
@@ -221,6 +245,9 @@ const rolePermissions: Record<string, string[]> = {
     "attachments:create",
     "attachments:read",
     "attachments:delete",
+    "documents:create",
+    "documents:read",
+    "documents:update",
   ],
   INSPECTOR: [
     "organizations:read",
@@ -234,6 +261,8 @@ const rolePermissions: Record<string, string[]> = {
     "event-types:read",
     "attachments:create",
     "attachments:read",
+    "documents:create",
+    "documents:read",
   ],
   VIEWER: [
     "organizations:read",
@@ -243,6 +272,7 @@ const rolePermissions: Record<string, string[]> = {
     "daily-log-events:read",
     "event-types:read",
     "attachments:read",
+    "documents:read",
   ],
 };
 
@@ -325,7 +355,7 @@ async function seedBaseCatalogs() {
 
   await seedRolePermissions();
   await upsertCatalogEntries(prisma.eventType, eventTypes);
-  await upsertCatalogByCode(prisma.documentType, documentTypes);
+    await upsertCatalogByCode(prisma.documentTypeCatalog, documentTypes);
 
   console.log("Base catalogs loaded.");
 }
