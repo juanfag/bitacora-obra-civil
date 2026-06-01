@@ -16,15 +16,17 @@ export function DailyLogEventList({
   events,
   onAttachmentUpload,
 }: DailyLogEventListProps) {
-  if (!events.length) {
+  const sortedEvents = [...events].sort(compareEventsByDate);
+
+  if (!sortedEvents.length) {
     return <EmptyEventsState />;
   }
 
   return (
-    <div className="timeline">
-      {events.map((event, index) => (
-        <div className="timeline-item" key={event.id ?? index}>
-          <span aria-hidden="true" className="timeline-marker" />
+    <div className="daily-log-events-timeline" aria-label="Timeline de eventos">
+      {sortedEvents.map((event, index) => (
+        <div className="daily-log-event-timeline-item" key={event.id ?? index}>
+          <span aria-hidden="true" className="daily-log-event-marker" />
           <DailyLogEventCard
             dailyLogStatus={dailyLogStatus}
             event={event}
@@ -35,4 +37,20 @@ export function DailyLogEventList({
       ))}
     </div>
   );
+}
+
+function compareEventsByDate(first: DailyLogEvent, second: DailyLogEvent) {
+  return getEventTimestamp(first) - getEventTimestamp(second);
+}
+
+function getEventTimestamp(event: DailyLogEvent) {
+  const value = event.reportedAt ?? event.createdAt;
+
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp = new Date(value).getTime();
+
+  return Number.isNaN(timestamp) ? 0 : timestamp;
 }

@@ -231,7 +231,7 @@ export default function ProfilePage() {
           </Link>
         </div>
 
-        <div className="panel">
+        <div className="panel" id="mi-firma">
           <h2>Mi firma</h2>
           <p className="muted">
             Esta firma aún no firma bitácoras. En la siguiente fase se aplicará como snapshot documental al firmar.

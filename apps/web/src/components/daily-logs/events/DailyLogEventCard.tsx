@@ -22,44 +22,60 @@ export function DailyLogEventCard({
   const eventDescription = getEventDescription(event);
   const eventUser = getEventUser(event);
   const attachmentCount = getAttachmentCount(event);
+  const hasAttachments = Boolean(attachmentCount && attachmentCount > 0);
 
   return (
-    <article className="card timeline-card">
-      <div className="status-row">
-        {eventTypeLabel ? <span className="badge">{eventTypeLabel}</span> : null}
-        {eventDate ? <span className="badge">{formatDateTime(eventDate)}</span> : null}
+    <article className="daily-log-event-card">
+      <div className="daily-log-event-card-header">
+        <div className="daily-log-event-heading">
+          {eventTypeLabel ? (
+            <span className="daily-log-event-type-badge">{eventTypeLabel}</span>
+          ) : null}
+          <h3>{event.activity || event.title || "Evento sin actividad"}</h3>
+        </div>
+
+        <div className="daily-log-event-meta-line">
+          {eventDate ? <span>{formatEventTime(eventDate)}</span> : null}
+          {eventUser ? <span>Reportado por {eventUser}</span> : null}
+        </div>
       </div>
 
-      <h2>{event.activity || event.title || "Evento sin actividad"}</h2>
+      <div className="daily-log-event-body">
+        {eventDescription ? (
+          <p>{eventDescription}</p>
+        ) : (
+          <p className="muted">Sin descripción de ejecución.</p>
+        )}
+      </div>
 
-      {eventDescription ? (
-        <p className="muted">{eventDescription}</p>
-      ) : (
-        <p className="muted">Sin descripción de ejecución.</p>
-      )}
-
-      <div className="event-meta">
-        {eventUser ? (
-          <p className="muted">
-            <strong>Usuario:</strong> {eventUser}
-          </p>
-        ) : null}
-        {attachmentCount !== null ? (
-          <p className="muted">
-            <strong>Adjuntos:</strong> {attachmentCount}
-          </p>
+      <div className="daily-log-event-evidence-row">
+        <span
+          className={
+            hasAttachments
+              ? "daily-log-evidence-chip"
+              : "daily-log-evidence-chip daily-log-evidence-chip-muted"
+          }
+        >
+          {formatAttachmentSummary(attachmentCount)}
+        </span>
+        {eventDate ? (
+          <span className="daily-log-event-date">
+            {formatEventDate(eventDate)}
+          </span>
         ) : null}
       </div>
 
-      <EventAttachmentList attachments={event.attachments} />
+      <footer className="daily-log-event-footer">
+        <EventAttachmentList attachments={event.attachments} />
 
-      {canUploadEventAttachment(dailyLogStatus) && event.id && onAttachmentUpload ? (
-        <EventAttachmentUpload
-          dailyLogEventId={event.id}
-          dailyLogStatus={dailyLogStatus}
-          onUpload={onAttachmentUpload}
-        />
-      ) : null}
+        {canUploadEventAttachment(dailyLogStatus) && event.id && onAttachmentUpload ? (
+          <EventAttachmentUpload
+            dailyLogEventId={event.id}
+            dailyLogStatus={dailyLogStatus}
+            onUpload={onAttachmentUpload}
+          />
+        ) : null}
+      </footer>
     </article>
   );
 }
@@ -87,7 +103,7 @@ function getEventDescription(event: DailyLogEvent) {
 }
 
 function getEventDate(event: DailyLogEvent) {
-  return event.createdAt ?? event.reportedAt ?? null;
+  return event.reportedAt ?? event.createdAt ?? null;
 }
 
 function getEventUser(event: DailyLogEvent) {
@@ -134,12 +150,38 @@ function formatTechnicalId(value: string) {
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
 
-function formatDateTime(value: string) {
+function formatEventTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Hora no disponible";
+  }
+
   return new Intl.DateTimeFormat("es-CO", {
-    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "America/Bogota",
+  }).format(date);
+}
+
+function formatEventDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Fecha no disponible";
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    day: "2-digit",
     month: "short",
-    year: "numeric",
-  }).format(new Date(value));
+    timeZone: "America/Bogota",
+  }).format(date);
+}
+
+function formatAttachmentSummary(value: number | null) {
+  if (!value) {
+    return "Sin evidencia";
+  }
+
+  return value === 1 ? "1 adjunto" : `${value} adjuntos`;
 }

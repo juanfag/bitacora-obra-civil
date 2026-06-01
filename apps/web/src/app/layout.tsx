@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SessionContextHeader } from "@/components/session-context-header";
 import "./globals.css";
 
 const navigation = [
@@ -34,6 +35,7 @@ export default function RootLayout({
                 </Link>
               ))}
             </nav>
+            <SessionContextHeader />
           </header>
           <main className="main">{children}</main>
         </div>

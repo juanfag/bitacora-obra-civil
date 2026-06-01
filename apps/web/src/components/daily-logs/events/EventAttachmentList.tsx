@@ -58,31 +58,42 @@ export function EventAttachmentList({ attachments }: EventAttachmentListProps) {
   }
 
   return (
-    <div className="attachment-list">
-      <h3>Adjuntos</h3>
+    <div className="attachment-list daily-log-attachment-list">
+      <div className="daily-log-attachment-title">
+        <h4>Adjuntos</h4>
+        <span>{attachments.length}</span>
+      </div>
       {error ? <p className="form-error">{error}</p> : null}
       <ul>
         {attachments.map((attachment) => {
           const fileName = getAttachmentName(attachment);
           const isPreviewable = canPreviewAttachment(attachment);
+          const fileTypeLabel = getAttachmentTypeLabel(attachment);
+          const thumbnailUrl = getSafeThumbnailUrl(attachment);
 
           return (
             <li className="attachment-item" key={attachment.id}>
-              <div>
-                <span className="attachment-name">
-                  <span aria-hidden="true">{getAttachmentIcon(attachment)}</span>{" "}
-                  {fileName}
+              <div className="daily-log-attachment-main">
+                <span className="daily-log-attachment-thumb" aria-hidden="true">
+                  {thumbnailUrl ? (
+                    <img alt="" src={thumbnailUrl} />
+                  ) : (
+                    getAttachmentIcon(attachment)
+                  )}
                 </span>
-                <p className="muted">
-                  {[
-                    attachment.mimeType,
-                    formatFileSize(getAttachmentSize(attachment)),
-                    formatUploadedAt(attachment.uploadedAt ?? attachment.createdAt),
-                    getUploadedByName(attachment),
-                  ]
-                    .filter(Boolean)
-                    .join(" / ")}
-                </p>
+                <div>
+                  <span className="attachment-name">{fileName}</span>
+                  <p className="muted">
+                    {[
+                      fileTypeLabel,
+                      formatFileSize(getAttachmentSize(attachment)),
+                      formatUploadedAt(attachment.uploadedAt ?? attachment.createdAt),
+                      getUploadedByName(attachment),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
               </div>
               <div className="attachment-actions">
                 {isPreviewable ? (
@@ -150,14 +161,42 @@ function canPreviewAttachment(attachment: Attachment) {
 
 function getAttachmentIcon(attachment: Attachment) {
   if (attachment.mimeType?.startsWith("image/")) {
-    return "[IMG]";
+    return "IMG";
   }
 
   if (attachment.mimeType === "application/pdf") {
-    return "[PDF]";
+    return "PDF";
   }
 
-  return "[DOC]";
+  return "DOC";
+}
+
+function getAttachmentTypeLabel(attachment: Attachment) {
+  if (attachment.mimeType?.startsWith("image/")) {
+    return "Imagen";
+  }
+
+  if (attachment.mimeType === "application/pdf") {
+    return "PDF";
+  }
+
+  return "Documento";
+}
+
+function getSafeThumbnailUrl(attachment: Attachment) {
+  if (!attachment.mimeType?.startsWith("image/") || !attachment.url) {
+    return null;
+  }
+
+  if (
+    attachment.url.startsWith("http://") ||
+    attachment.url.startsWith("https://") ||
+    attachment.url.startsWith("data:image/")
+  ) {
+    return attachment.url;
+  }
+
+  return null;
 }
 
 function getUploadedByName(attachment: Attachment) {

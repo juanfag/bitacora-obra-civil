@@ -7,12 +7,12 @@ import type { PointerEvent } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { CreateDailyLogEventForm } from "@/components/daily-logs/events/CreateDailyLogEventForm";
 import { DailyLogEventList } from "@/components/daily-logs/events/DailyLogEventList";
+import { DailyLogDocumentEvidence } from "@/components/daily-log/daily-log-document-evidence";
+import { DailyLogHeader } from "@/components/daily-log/daily-log-header";
+import { DailyLogSignaturesTable } from "@/components/daily-log/daily-log-signatures-table";
 import { InfoCard } from "@/components/ui/InfoCard";
 import { StatusBadge } from "@/components/workflow/StatusBadge";
-import {
-  WorkflowAction,
-  WorkflowActions,
-} from "@/components/workflow/WorkflowActions";
+import { WorkflowAction } from "@/components/workflow/WorkflowActions";
 import {
   ApiClientError,
   DailyLogAuditResponse,
@@ -401,46 +401,32 @@ export default function DailyLogDetailPage() {
 
   return (
     <AuthGuard>
-      <section>
-        <div className="page-header">
-          <div>
-            <p className="eyebrow">Detalle de bitácora</p>
-            <h1>
-              {dailyLog
-                ? `Bitácora del ${formatDate(dailyLog.logDate)}`
-                : "Bitácora diaria"}
-            </h1>
-            <p className="muted">
-              Revisa el estado actual de la bitácora y su información guardada.
-            </p>
-          </div>
-          {dailyLog ? (
-            <div className="toolbar">
-              <button
-                className="button secondary"
-                disabled={isDownloadingPdf}
-                onClick={downloadPdf}
-                type="button"
-              >
-                {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
-              </button>
-              <Link
-                className="button secondary"
-                href={
-                  dailyLog.projectId
-                    ? `/daily-logs?projectId=${dailyLog.projectId}`
-                    : "/projects"
-                }
-              >
-                Volver
-              </Link>
+      <section className="daily-log-detail-shell">
+        {dailyLog ? (
+          <DailyLogHeader
+            dailyLog={dailyLog}
+            events={dailyLogEvents}
+            isDownloadingPdf={isDownloadingPdf}
+            onDownloadPdf={downloadPdf}
+            onRunWorkflowAction={runWorkflowAction}
+            processingAction={processingAction}
+            signatures={dailyLogSignatures}
+          />
+        ) : (
+          <div className="page-header daily-log-hero">
+            <div className="daily-log-title-block">
+              <p className="eyebrow">Detalle de bitácora</p>
+              <h1>Bitácora diaria</h1>
+              <p className="muted">
+                Revisa el estado actual, la evidencia documental y la trazabilidad
+                operativa registrada.
+              </p>
             </div>
-          ) : (
             <Link className="button secondary" href="/projects">
               Volver
             </Link>
-          )}
-        </div>
+          </div>
+        )}
 
         {isLoading ? (
           <InfoCard>
@@ -472,8 +458,8 @@ export default function DailyLogDetailPage() {
         ) : null}
 
         {!isLoading && !notFound && dailyLog ? (
-          <div className="grid">
-            <InfoCard title="Resumen">
+          <div className="daily-log-document-stack">
+            <InfoCard className="daily-log-section-card daily-log-section-summary" title="Resumen">
               <div className="status-row">
                 <StatusBadge status={dailyLog.status} />
                 <span className="badge">{formatDate(dailyLog.logDate)}</span>
@@ -484,16 +470,10 @@ export default function DailyLogDetailPage() {
               </p>
             </InfoCard>
 
-            <InfoCard title="Acciones del flujo">
-              <WorkflowActions
-                dailyLogStatus={dailyLog.status}
-                onRunAction={runWorkflowAction}
-                processingAction={processingAction}
-              />
-              {processingAction ? <p className="muted">Cargando...</p> : null}
-            </InfoCard>
-
-            <InfoCard className="events-panel" title="Eventos de la bitácora">
+            <InfoCard
+              className="daily-log-section-card daily-log-section-primary events-panel"
+              title="Eventos de la bitácora"
+            >
               {isDailyLogReadOnly(dailyLog.status) ? (
                 <p className="muted readonly-note">
                   Esta bitácora está en modo solo lectura. No se pueden agregar eventos ni adjuntos.
@@ -518,7 +498,10 @@ export default function DailyLogDetailPage() {
               />
             </InfoCard>
 
-            <InfoCard title="Evidencia documental">
+            <InfoCard
+              className="daily-log-section-card daily-log-section-medium"
+              title="Evidencia documental"
+            >
               <DocumentEvidenceSection
                 evidence={documentEvidence}
                 error={documentEvidenceError}
@@ -528,7 +511,10 @@ export default function DailyLogDetailPage() {
               />
             </InfoCard>
 
-            <InfoCard title="Firmas digitales">
+            <InfoCard
+              className="daily-log-section-card daily-log-section-medium"
+              title="Firmas digitales"
+            >
               <DigitalSignaturesSection
                 dailyLogStatus={dailyLog.status}
                 error={signaturesError}
@@ -540,7 +526,10 @@ export default function DailyLogDetailPage() {
               />
             </InfoCard>
 
-            <InfoCard title="Auditoría">
+            <InfoCard
+              className="daily-log-section-card daily-log-section-medium"
+              title="Auditoría"
+            >
               <AuditSection
                 audit={audit}
                 error={auditError}
@@ -549,23 +538,32 @@ export default function DailyLogDetailPage() {
               />
             </InfoCard>
 
-            <InfoCard title="Metadatos">
-              <p>
-                <strong>ID del proyecto:</strong>{" "}
-                {formatTechnicalId(dailyLog.projectId)}
-              </p>
-              <p>
-                <strong>Creado:</strong>{" "}
-                {dailyLog.createdAt
-                  ? formatDateTime(dailyLog.createdAt)
-                  : "No disponible"}
-              </p>
-              <p>
-                <strong>Actualizado:</strong>{" "}
-                {dailyLog.updatedAt
-                  ? formatDateTime(dailyLog.updatedAt)
-                  : "No disponible"}
-              </p>
+            <InfoCard
+              className="daily-log-section-card daily-log-section-low daily-log-metadata-section"
+              title="Metadatos"
+            >
+              <div className="daily-log-metadata-grid">
+                <p>
+                  <strong>Proyecto</strong>
+                  <span>{formatTechnicalId(dailyLog.projectId)}</span>
+                </p>
+                <p>
+                  <strong>Creado</strong>
+                  <span>
+                    {dailyLog.createdAt
+                      ? formatDateTime(dailyLog.createdAt)
+                      : "No disponible"}
+                  </span>
+                </p>
+                <p>
+                  <strong>Actualizado</strong>
+                  <span>
+                    {dailyLog.updatedAt
+                      ? formatDateTime(dailyLog.updatedAt)
+                      : "No disponible"}
+                  </span>
+                </p>
+              </div>
             </InfoCard>
           </div>
         ) : null}
@@ -616,30 +614,6 @@ type DocumentEvidence = {
   message: string;
 };
 
-type MasterSignatureRole = {
-  id: DailyLogSignatureType;
-  role: string;
-  title: string;
-};
-
-const MASTER_SIGNATURE_ROLES: MasterSignatureRole[] = [
-  {
-    id: "RESPONSIBLE",
-    role: "Responsable / Residente",
-    title: "Responsable / Residente",
-  },
-  {
-    id: "APPROVER",
-    role: "Director / Aprobador",
-    title: "Director / Aprobador",
-  },
-  {
-    id: "INSPECTOR",
-    role: "Interventor / Inspector",
-    title: "Interventor / Inspector",
-  },
-];
-
 function DigitalSignaturesSection({
   dailyLogStatus,
   error,
@@ -657,114 +631,16 @@ function DigitalSignaturesSection({
   signingType: DailyLogSignatureType | null;
   userSignature: UserSignature | null;
 }) {
-  const canSign =
-    dailyLogStatus === "APPROVED" || dailyLogStatus === "CLOSED";
-
   return (
-    <div className="stack">
-      <p className="muted">
-        Las firmas se aplican usando tu firma maestra registrada y quedan congeladas como evidencia historica de esta bitacora.
-      </p>
-      {!canSign ? (
-        <p className="muted">
-          La bitacora debe estar aprobada o cerrada para aplicar firmas digitales.
-        </p>
-      ) : null}
-      {!userSignature?.hasSignature ? (
-        <p className="muted">
-          Debes registrar tu firma en <Link href="/profile">Mi perfil</Link> antes de firmar.
-        </p>
-      ) : null}
-      {isLoading ? <p className="muted">Cargando firmas...</p> : null}
-      {error ? <p className="form-error">{error}</p> : null}
-
-      {MASTER_SIGNATURE_ROLES.map((signer) => (
-        <SignatureSnapshotCard
-          key={signer.id}
-          canSign={canSign && Boolean(userSignature?.hasSignature)}
-          isSigning={signingType === signer.id}
-          onSign={() => onSign(signer.id)}
-          signature={signatures.find(
-            (signature) => signature.signatureType === signer.id,
-          )}
-          signer={signer}
-        />
-      ))}
-    </div>
-  );
-}
-
-function SignatureSnapshotCard({
-  canSign,
-  isSigning,
-  onSign,
-  signature,
-  signer,
-}: {
-  canSign: boolean;
-  isSigning: boolean;
-  onSign: () => void;
-  signature: DailyLogSignature | undefined;
-  signer: MasterSignatureRole;
-}) {
-  return (
-    <div className="panel signature-card">
-      <div className="status-row signature-card-header">
-        <div>
-          <h3>{signer.title}</h3>
-          <p className="muted">
-            <strong>Nombre:</strong> {signature?.signerName ?? "Pendiente"}
-          </p>
-          <p className="muted">
-            <strong>Rol:</strong> {signature?.signerRole ?? signer.role}
-          </p>
-          <p className="muted">
-            <strong>Fecha/hora:</strong>{" "}
-            {signature ? formatDateTime(signature.signedAt) : "No disponible"}
-          </p>
-        </div>
-        <span className="badge">{signature ? "Firmado" : "Pendiente"}</span>
-      </div>
-
-      {signature ? (
-        <div className="stack">
-          <p className="muted">
-            Firma congelada al momento de firmar. Reemplazar la firma maestra no cambiara esta evidencia.
-          </p>
-          {signature.previewDataUrl ? (
-            <img
-              alt={`Firma aplicada ${signer.role}`}
-              src={signature.previewDataUrl}
-              style={{
-                background: "#ffffff",
-                border: "1px solid #e2e8f0",
-                borderRadius: 6,
-                maxHeight: 120,
-                maxWidth: "100%",
-                objectFit: "contain",
-                padding: 8,
-              }}
-            />
-          ) : (
-            <p className="muted">Previsualizacion no disponible.</p>
-          )}
-          <p className="muted">
-            {signature.fileName} · {formatFileSize(signature.fileSize)}
-          </p>
-        </div>
-      ) : (
-        <div className="toolbar">
-          <button
-            className="button signature-action"
-            disabled={!canSign || isSigning}
-            onClick={onSign}
-            type="button"
-          >
-            {isSigning ? "Firmando..." : "Firmar con mi firma registrada"}
-          </button>
-        </div>
-      )}
-    </div>
+    <DailyLogSignaturesTable
+      dailyLogStatus={dailyLogStatus}
+      error={error}
+      isLoading={isLoading}
+      onSign={onSign}
+      signatures={signatures}
+      signingType={signingType}
+      userSignature={userSignature}
+    />
   );
 }
 
@@ -1181,12 +1057,43 @@ function AuditSection({
       ) : null}
 
       {filteredItems.length > 0 ? (
-        <div className="timeline">
+        <div className="audit-table" role="table" aria-label="Registros de auditoría">
+          <div className="audit-table-head" role="row">
+            <span role="columnheader">Acción</span>
+            <span role="columnheader">Fecha/hora</span>
+            <span role="columnheader">Usuario</span>
+            <span role="columnheader">Detalle</span>
+          </div>
           {filteredItems.map((item) => (
-            <AuditTimelineItem item={item} key={item.id} />
+            <AuditTableRow item={item} key={item.id} />
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function AuditTableRow({
+  item,
+}: {
+  item: DailyLogAuditResponse["items"][number];
+}) {
+  return (
+    <div className="audit-table-row" role="row">
+      <span className="audit-table-action" role="cell">
+        <span className={`audit-action-badge audit-badge-${getAuditActionTone(item.action)}`}>
+          {formatAuditAction(item.action)}
+        </span>
+      </span>
+      <span className="audit-table-date" role="cell">
+        {formatDateTime(item.createdAt)}
+      </span>
+      <span className="audit-table-user" role="cell">
+        {formatAuditActor(item)}
+      </span>
+      <span className="audit-table-detail" role="cell">
+        {formatAuditDetail(item)}
+      </span>
     </div>
   );
 }
@@ -1282,130 +1189,14 @@ function DocumentEvidenceSection({
   isLoading: boolean;
   onDownloadPdf: () => void;
 }) {
-  if (isLoading) {
-    return <p className="muted">Cargando evidencia documental...</p>;
-  }
-
-  if (error) {
-    return <p className="form-error">{error}</p>;
-  }
-
-  if (!evidence) {
-    return (
-      <p className="muted">
-        No hay evidencia documental disponible para esta bitácora.
-      </p>
-    );
-  }
-
-  if (!evidence.isClosed) {
-    return (
-      <div className="stack">
-        <p className="muted">
-          La evidencia documental final estará disponible cuando la bitácora sea cerrada.
-        </p>
-        <p className="muted">{evidence.message}</p>
-      </div>
-    );
-  }
-
-  if (!evidence.documentId) {
-    return (
-      <div className="stack">
-        <p className="muted">No hay evidencia documental final disponible.</p>
-        <p className="muted">{evidence.message}</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="stack">
-      <div className="status-row">
-        <span className="badge">Estado: {evidence.status}</span>
-        <span className="badge">
-          Versión PDF: {evidence.latestPdfVersion ?? "No disponible"}
-        </span>
-      </div>
-
-      <div className="metadata-grid">
-        <EvidenceField label="Nombre del archivo" value={evidence.fileName} />
-        <EvidenceField label="Tipo MIME" value={evidence.mimeType} />
-        <EvidenceField label="Tamaño" value={formatFileSize(evidence.fileSize)} />
-        <EvidenceField
-          label="Fecha/hora de generación"
-          value={
-            evidence.generatedAt
-              ? formatDateTime(evidence.generatedAt)
-              : "No disponible"
-          }
-        />
-        <EvidenceField
-          label="Generado por"
-          value={formatGeneratedBy(evidence.generatedBy)}
-        />
-        <EvidenceField
-          label="Código de verificación"
-          value={evidence.verificationCode}
-        />
-        <EvidenceField label="Hash corto seguro" value={evidence.shortHash} />
-        <EvidenceField
-          label="Estado documental"
-          value={evidence.message || "Evidencia documental final disponible."}
-        />
-      </div>
-
-      <div>
-        <h3>Resumen básico de auditoría</h3>
-        <p className="muted">Registros relacionados: {evidence.auditSummary.total}</p>
-        {evidence.auditSummary.latest.length > 0 ? (
-          <ul>
-            {evidence.auditSummary.latest.map((item) => (
-              <li key={`${item.entityName}-${item.entityId}-${item.createdAt}`}>
-                <strong>{item.action}</strong> · {item.entityName} ·{" "}
-                {formatDateTime(item.createdAt)}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="muted">Sin registros de auditoría relacionados.</p>
-        )}
-      </div>
-
-      <div className="toolbar">
-        {evidence.publicVerificationUrl ? (
-          <a
-            className="button secondary"
-            href={evidence.publicVerificationUrl}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Verificación pública
-          </a>
-        ) : null}
-        <button
-          className="button secondary"
-          disabled={isDownloadingPdf}
-          onClick={onDownloadPdf}
-          type="button"
-        >
-          {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function EvidenceField({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | number | null | undefined;
-}) {
-  return (
-    <p>
-      <strong>{label}:</strong> {value || "No disponible"}
-    </p>
+    <DailyLogDocumentEvidence
+      evidence={evidence}
+      error={error}
+      isDownloadingPdf={isDownloadingPdf}
+      isLoading={isLoading}
+      onDownloadPdf={onDownloadPdf}
+    />
   );
 }
 
@@ -1469,46 +1260,23 @@ function formatTechnicalId(value: string) {
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
 
-function formatGeneratedBy(
-  value: DocumentEvidence["generatedBy"],
-) {
-  if (!value) {
-    return "No disponible";
-  }
-
-  return value.fullName || formatTechnicalId(value.id);
-}
-
-function formatFileSize(value: number | null | undefined) {
-  if (typeof value !== "number") {
-    return "No disponible";
-  }
-
-  if (value < 1024) {
-    return `${value} B`;
-  }
-
-  if (value < 1024 * 1024) {
-    return `${(value / 1024).toFixed(1)} KB`;
-  }
-
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
-}
-
 function formatAuditAction(action: string) {
   const labels: Record<string, string> = {
     APPROVE: "Aprobación",
     CLOSE: "Cierre",
     CREATE: "Creación",
     DAILY_LOG_SIGNATURE_APPLIED: "Firma aplicada",
+    DELETE: "Eliminación",
+    DOWNLOAD: "Descarga",
     GENERATE_PDF: "PDF generado",
     REJECT: "Rechazo",
+    SIGN: "Firma aplicada",
     SUBMIT: "Envío a revisión",
     UPDATE: "Actualización",
     VOID: "Anulación",
   };
 
-  return labels[action] ?? action;
+  return labels[action] ?? humanizeAuditToken(action);
 }
 
 function getAuditActionIcon(action: string) {
@@ -1558,6 +1326,12 @@ function getAuditActionTone(action: string) {
 }
 
 function formatAuditActor(item: DailyLogAuditResponse["items"][number]) {
+  const directActor = getAuditActorCandidate(item);
+
+  if (directActor) {
+    return directActor;
+  }
+
   const signerName = getAuditPrimitive(item.newValue, "signerName");
   const signerEmail = getAuditPrimitive(item.newValue, "signerEmail");
 
@@ -1569,11 +1343,58 @@ function formatAuditActor(item: DailyLogAuditResponse["items"][number]) {
     return signerName;
   }
 
-  if (!item.userId) {
-    return "Sistema";
+  return "Usuario no disponible";
+}
+
+function formatAuditDetail(item: DailyLogAuditResponse["items"][number]) {
+  const oldSummary = summarizeAuditValue(item.oldValue);
+  const newSummary = summarizeAuditValue(item.newValue);
+  const summary = newSummary || oldSummary;
+
+  if (item.action === "UPDATE" && summary) {
+    return summary;
   }
 
-  return "Usuario registrado";
+  const details: Record<string, string> = {
+    APPROVE: "Bitácora aprobada",
+    CLOSE: "Bitácora cerrada",
+    CREATE: "Bitácora creada",
+    DAILY_LOG_SIGNATURE_APPLIED: "Firma digital aplicada",
+    DELETE: "Registro eliminado",
+    DOWNLOAD: "Descarga registrada",
+    GENERATE_PDF: "PDF final generado",
+    REJECT: "Bitácora rechazada",
+    SUBMIT: "Bitácora enviada a aprobación",
+    UPDATE: "Registro actualizado",
+    VOID: "Bitácora anulada",
+  };
+
+  return details[item.action] ?? humanizeAuditToken(item.action);
+}
+
+function getAuditActorCandidate(item: DailyLogAuditResponse["items"][number]) {
+  const record = item as DailyLogAuditResponse["items"][number] & {
+    actor?: { email?: string | null; fullName?: string | null; name?: string | null } | null;
+    user?: { email?: string | null; fullName?: string | null; name?: string | null } | null;
+    userEmail?: string | null;
+    userName?: string | null;
+  };
+  const candidate =
+    record.userName ||
+    record.user?.fullName ||
+    record.user?.name ||
+    record.user?.email ||
+    record.actor?.fullName ||
+    record.actor?.name ||
+    record.actor?.email ||
+    record.userEmail ||
+    null;
+
+  if (!candidate || isSensitiveAuditText(candidate) || isUuidLike(candidate)) {
+    return null;
+  }
+
+  return candidate;
 }
 
 function getAuditPrimitive(value: unknown, key: string) {
@@ -1727,6 +1548,21 @@ function truncateText(value: string, maxLength: number) {
   }
 
   return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function humanizeAuditToken(value: string) {
+  return value
+    .toLocaleLowerCase("es-CO")
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toLocaleUpperCase("es-CO")}${part.slice(1)}`)
+    .join(" ");
+}
+
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 function clearCanvas(canvas: HTMLCanvasElement | null) {
