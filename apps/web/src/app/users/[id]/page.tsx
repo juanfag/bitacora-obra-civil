@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import {
   AssignableRole,
@@ -14,6 +14,7 @@ import {
   getProjects,
   getUser,
   invalidateUserSessions,
+  resetUserPassword,
   updateUserRoles,
 } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
@@ -39,12 +40,19 @@ export default function UserDetailPage() {
   const [projectsSuccess, setProjectsSuccess] = useState<string | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [sessionsSuccess, setSessionsSuccess] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingAdminCatalogs, setIsLoadingAdminCatalogs] = useState(false);
   const [canAdministerUser, setCanAdministerUser] = useState(false);
   const [isSavingRoles, setIsSavingRoles] = useState(false);
   const [isSavingProjects, setIsSavingProjects] = useState(false);
   const [isInvalidatingSessions, setIsInvalidatingSessions] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [resetPasswordForm, setResetPasswordForm] = useState({
+    newPassword: "",
+    confirmPassword: "",
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -65,6 +73,8 @@ export default function UserDetailPage() {
       setProjectsSuccess(null);
       setSessionsError(null);
       setSessionsSuccess(null);
+      setPasswordError(null);
+      setPasswordSuccess(null);
       setCanAdministerUser(false);
       setIsLoadingAdminCatalogs(false);
 
@@ -381,6 +391,67 @@ export default function UserDetailPage() {
       setSessionsError("No se pudieron invalidar las sesiones.");
     } finally {
       setIsInvalidatingSessions(false);
+    }
+  }
+
+  async function handleResetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!user || !canAdministerUser || isResettingPassword) {
+      return;
+    }
+
+    if (resetPasswordForm.newPassword !== resetPasswordForm.confirmPassword) {
+      setPasswordError("La confirmacion de contraseña no coincide.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "¿Seguro que deseas resetear la contraseña de este usuario? Sus sesiones activas serán invalidadas.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsResettingPassword(true);
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    try {
+      const updatedUser = await resetUserPassword(user.id, resetPasswordForm);
+
+      setUser(updatedUser);
+      setResetPasswordForm({ newPassword: "", confirmPassword: "" });
+      setPasswordSuccess(
+        "Contraseña reseteada correctamente. Las sesiones activas fueron invalidadas.",
+      );
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        logout();
+        router.replace("/login");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
+        setPasswordError("No tienes permisos para resetear contraseñas.");
+        return;
+      }
+
+      if (caughtError instanceof ApiClientError && caughtError.status === 404) {
+        setPasswordError(
+          "No se encontró el usuario o no tienes alcance para modificarlo.",
+        );
+        return;
+      }
+
+      setPasswordError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible resetear la contraseña.",
+      );
+    } finally {
+      setIsResettingPassword(false);
     }
   }
 
@@ -705,6 +776,71 @@ export default function UserDetailPage() {
                       </p>
                     </div>
                   ) : null}
+                </section>
+
+                <section className="dashboard-section">
+                  <div className="section-heading">
+                    <div>
+                      <h2>Resetear contraseña</h2>
+                      <p className="muted">
+                        Define una contraseña temporal segura. El usuario deberá
+                        iniciar sesión nuevamente.
+                      </p>
+                    </div>
+                  </div>
+
+                  {passwordError ? (
+                    <p className="form-error">{passwordError}</p>
+                  ) : null}
+                  {passwordSuccess ? (
+                    <p className="form-success">{passwordSuccess}</p>
+                  ) : null}
+
+                  <form className="users-admin-form" onSubmit={handleResetPassword}>
+                    <label>
+                      <span>Nueva contraseña</span>
+                      <input
+                        autoComplete="new-password"
+                        disabled={isResettingPassword}
+                        onChange={(event) =>
+                          setResetPasswordForm((current) => ({
+                            ...current,
+                            newPassword: event.target.value,
+                          }))
+                        }
+                        type="password"
+                        value={resetPasswordForm.newPassword}
+                      />
+                    </label>
+                    <label>
+                      <span>Confirmar contraseña</span>
+                      <input
+                        autoComplete="new-password"
+                        disabled={isResettingPassword}
+                        onChange={(event) =>
+                          setResetPasswordForm((current) => ({
+                            ...current,
+                            confirmPassword: event.target.value,
+                          }))
+                        }
+                        type="password"
+                        value={resetPasswordForm.confirmPassword}
+                      />
+                    </label>
+                    <button
+                      className="button secondary"
+                      disabled={
+                        isResettingPassword ||
+                        !resetPasswordForm.newPassword ||
+                        !resetPasswordForm.confirmPassword
+                      }
+                      type="submit"
+                    >
+                      {isResettingPassword
+                        ? "Reseteando..."
+                        : "Resetear contraseña"}
+                    </button>
+                  </form>
                 </section>
 
                 <section className="dashboard-section">

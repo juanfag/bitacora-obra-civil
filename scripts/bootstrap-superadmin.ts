@@ -49,6 +49,7 @@ const requiredPermissions = [
   "users:update",
   "users:delete",
   "users:manage",
+  "users:password:reset",
 ];
 
 const permissionLabels: Record<string, string> = {
@@ -59,6 +60,7 @@ const permissionLabels: Record<string, string> = {
   "users:update": "Update users",
   "users:delete": "Delete users",
   "users:manage": "Manage users",
+  "users:password:reset": "Reset user passwords",
 };
 
 const adapter = new PrismaPg({

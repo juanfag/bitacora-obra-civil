@@ -169,6 +169,36 @@ const permissions = [
     description: "Allows assigning roles to users.",
   },
   {
+    code: "users:create",
+    name: "Create users",
+    description: "Allows creating users.",
+  },
+  {
+    code: "users:read",
+    name: "Read users",
+    description: "Allows reading users.",
+  },
+  {
+    code: "users:update",
+    name: "Update users",
+    description: "Allows updating users.",
+  },
+  {
+    code: "users:delete",
+    name: "Delete users",
+    description: "Allows soft deleting users.",
+  },
+  {
+    code: "users:manage",
+    name: "Manage users",
+    description: "Allows administrative user management.",
+  },
+  {
+    code: "users:password:reset",
+    name: "Reset user passwords",
+    description: "Allows resetting another user's password.",
+  },
+  {
     code: "attachments:create",
     name: "Create attachments",
     description: "Allows uploading attachments.",

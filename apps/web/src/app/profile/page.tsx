@@ -7,6 +7,7 @@ import { AuthGuard } from "@/components/auth-guard";
 import {
   ApiClientError,
   UserSignature,
+  changeMyPassword,
   deleteMySignature,
   getMySignature,
   uploadMySignature,
@@ -23,6 +24,14 @@ export default function ProfilePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -165,6 +174,45 @@ export default function ProfilePage() {
     }
   }
 
+  async function handlePasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError("La confirmacion de contraseña no coincide.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+
+    try {
+      await changeMyPassword(passwordForm);
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setPasswordSuccess(
+        "Contraseña actualizada. Tus otras sesiones fueron invalidadas.",
+      );
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        logout();
+        router.replace("/login");
+        return;
+      }
+
+      setPasswordError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible cambiar la contraseña.",
+      );
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
+
   const preview = selectedPreview ?? signature?.previewDataUrl ?? null;
 
   return (
@@ -269,6 +317,70 @@ export default function ProfilePage() {
                 {isDeleting ? "Eliminando..." : "Eliminar firma"}
               </button>
             </div>
+          </form>
+        </div>
+
+        <div className="panel profile-password-panel">
+          <h2>Cambiar contraseña</h2>
+          <p className="muted">
+            Usa una contraseña de al menos 8 caracteres con mayúscula,
+            minúscula, número y carácter especial.
+          </p>
+
+          {passwordError ? <p className="form-error">{passwordError}</p> : null}
+          {passwordSuccess ? (
+            <p className="form-success">{passwordSuccess}</p>
+          ) : null}
+
+          <form className="form" onSubmit={handlePasswordChange}>
+            <label>
+              Contraseña actual
+              <input
+                autoComplete="current-password"
+                disabled={isChangingPassword}
+                type="password"
+                value={passwordForm.currentPassword}
+                onChange={(event) =>
+                  setPasswordForm((current) => ({
+                    ...current,
+                    currentPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Nueva contraseña
+              <input
+                autoComplete="new-password"
+                disabled={isChangingPassword}
+                type="password"
+                value={passwordForm.newPassword}
+                onChange={(event) =>
+                  setPasswordForm((current) => ({
+                    ...current,
+                    newPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Confirmar nueva contraseña
+              <input
+                autoComplete="new-password"
+                disabled={isChangingPassword}
+                type="password"
+                value={passwordForm.confirmPassword}
+                onChange={(event) =>
+                  setPasswordForm((current) => ({
+                    ...current,
+                    confirmPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <button className="button" disabled={isChangingPassword} type="submit">
+              {isChangingPassword ? "Actualizando..." : "Cambiar contraseña"}
+            </button>
           </form>
         </div>
       </section>

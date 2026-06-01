@@ -493,6 +493,33 @@ export function deleteMySignature() {
   });
 }
 
+export function changeMyPassword(payload: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}) {
+  return apiRequest<{ ok: boolean; sessionsInvalidated: boolean }>(
+    "/users/me/password",
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function resetUserPassword(
+  userId: string,
+  payload: {
+    newPassword: string;
+    confirmPassword: string;
+  },
+) {
+  return apiRequest<UserRead>(`/users/${encodeURIComponent(userId)}/password`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getDailyLogSignatures(dailyLogId: string) {
   return apiRequest<DailyLogSignature[]>(
     `/daily-logs/${encodeURIComponent(dailyLogId)}/signatures`,

@@ -17,7 +17,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ProjectAccessPolicy } from "../projects/project-access.policy";
 import { UploadedFile } from "../uploads/upload-file.types";
 import { AssignUserRolesDto } from "./dto/assign-user-roles.dto";
+import { ChangeMyPasswordDto } from "./dto/change-my-password.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { ResetUserPasswordDto } from "./dto/reset-user-password.dto";
 import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import {
@@ -68,6 +70,9 @@ const ADMIN_ROLE_CODES = [
   "ORG_ADMIN",
   "PROJECT_ADMIN",
 ] satisfies string[];
+
+const PASSWORD_POLICY_MESSAGE =
+  "La contraseña debe tener minimo 8 caracteres, una mayuscula, una minuscula, un numero y un caracter especial.";
 
 const userSelect = {
   id: true,
@@ -610,6 +615,160 @@ export class UsersService {
     return this.findOne(targetUserId, actorUserId);
   }
 
+  async changeMyPassword(
+    userId: string,
+    changeMyPasswordDto: ChangeMyPasswordDto,
+    audit: AuditRequestContext,
+  ) {
+    this.ensurePasswordPayload(
+      changeMyPasswordDto.newPassword,
+      changeMyPasswordDto.confirmPassword,
+    );
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        passwordHash: true,
+        tokenVersion: true,
+      },
+    });
+
+    if (!user || !user.passwordHash) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(
+      changeMyPasswordDto.currentPassword,
+      user.passwordHash,
+    );
+
+    if (!isCurrentPasswordValid) {
+      throw new UnauthorizedException("La contraseña actual no es válida.");
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash: await this.hashPassword(changeMyPasswordDto.newPassword),
+        tokenVersion: {
+          increment: 1,
+        },
+      },
+      select: {
+        id: true,
+        tokenVersion: true,
+      },
+    });
+
+    await this.auditService.record({
+      ...audit,
+      action: "USER_PASSWORD_CHANGED",
+      entity: "User",
+      entityId: userId,
+      oldValue: {
+        tokenVersion: user.tokenVersion,
+      },
+      newValue: {
+        tokenVersion: updatedUser.tokenVersion,
+        sessionsInvalidated: true,
+      },
+    });
+
+    return {
+      ok: true,
+      sessionsInvalidated: true,
+    };
+  }
+
+  async resetPassword(
+    targetUserId: string,
+    resetUserPasswordDto: ResetUserPasswordDto,
+    actorUserId: string,
+    audit: AuditRequestContext,
+  ): Promise<UserReadDto> {
+    this.ensurePasswordPayload(
+      resetUserPasswordDto.newPassword,
+      resetUserPasswordDto.confirmPassword,
+    );
+
+    const actorUser = await this.prisma.user.findUnique({
+      where: { id: actorUserId },
+      select: { id: true },
+    });
+
+    if (!actorUser) {
+      throw new UnauthorizedException("Usuario autenticado no encontrado.");
+    }
+
+    const accessibleProjectIds =
+      await this.projectAccessPolicy.getAccessibleProjectIds(actorUserId);
+
+    if (accessibleProjectIds && accessibleProjectIds.length === 0) {
+      throw new ForbiddenException("No tiene proyectos disponibles.");
+    }
+
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        tokenVersion: true,
+        projectAssignments: {
+          where: {
+            status: RecordStatus.ACTIVE,
+            projectId: accessibleProjectIds
+              ? {
+                  in: accessibleProjectIds,
+                }
+              : undefined,
+          },
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException("Usuario no encontrado");
+    }
+
+    if (accessibleProjectIds && targetUser.projectAssignments.length === 0) {
+      throw new ForbiddenException("No puede administrar este usuario.");
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        passwordHash: await this.hashPassword(resetUserPasswordDto.newPassword),
+        tokenVersion: {
+          increment: 1,
+        },
+      },
+      select: {
+        id: true,
+        tokenVersion: true,
+      },
+    });
+
+    await this.auditService.record({
+      ...audit,
+      action: "USER_PASSWORD_RESET",
+      entity: "User",
+      entityId: targetUserId,
+      oldValue: {
+        tokenVersion: targetUser.tokenVersion,
+      },
+      newValue: {
+        tokenVersion: updatedUser.tokenVersion,
+        resetById: actorUserId,
+        sessionsInvalidated: true,
+      },
+    });
+
+    return this.findOne(targetUserId, actorUserId);
+  }
+
   async create(createUserDto: CreateUserDto) {
     try {
       return await this.prisma.user.create({
@@ -844,6 +1003,16 @@ export class UsersService {
 
   private async hashPassword(password?: string) {
     return password ? bcrypt.hash(password, 10) : undefined;
+  }
+
+  private ensurePasswordPayload(newPassword: string, confirmPassword: string) {
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException("La confirmacion de contraseña no coincide.");
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      throw new BadRequestException(PASSWORD_POLICY_MESSAGE);
+    }
   }
 
   private async validateRoleAssignmentScope(
@@ -1647,6 +1816,16 @@ function isAdminRoleCode(roleCode: string) {
 
 function isNonActiveUserStatus(status: UserStatus) {
   return status !== UserStatus.ACTIVE;
+}
+
+function isStrongPassword(value: string) {
+  return (
+    value.length >= 8 &&
+    /[A-Z]/.test(value) &&
+    /[a-z]/.test(value) &&
+    /\d/.test(value) &&
+    /[^A-Za-z0-9]/.test(value)
+  );
 }
 
 function toUserReadDto(user: UserReadRecord): UserReadDto {

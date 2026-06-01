@@ -15,6 +15,8 @@ export type AuditActionType =
   | "USER_SIGNATURE_UPLOADED"
   | "USER_SIGNATURE_REPLACED"
   | "USER_SIGNATURE_DELETED"
+  | "USER_PASSWORD_CHANGED"
+  | "USER_PASSWORD_RESET"
   | "DAILY_LOG_SIGNATURE_APPLIED";
 
 export type AuditRequestContext = {

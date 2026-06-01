@@ -42,7 +42,9 @@ import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { UploadedFile } from "../uploads/upload-file.types";
 import { validateUploadFileMagicBytes } from "../uploads/upload.validators";
 import { AssignUserRolesDto } from "./dto/assign-user-roles.dto";
+import { ChangeMyPasswordDto } from "./dto/change-my-password.dto";
 import { CreateUserDto } from "./dto/create-user.dto";
+import { ResetUserPasswordDto } from "./dto/reset-user-password.dto";
 import { UpdateUserStatusDto } from "./dto/update-user-status.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import {
@@ -118,6 +120,24 @@ export class UsersController {
     @AuditContext() audit: AuditRequestContext,
   ) {
     return this.usersService.deleteMySignature(user.sub, {
+      ...audit,
+      actorId: user.sub,
+    });
+  }
+
+  @Patch("me/password")
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Change current user's password" })
+  @ApiOkResponse({ description: "Password changed and sessions invalidated." })
+  @ApiBadRequestResponse({ description: "Invalid password payload." })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @UseGuards(JwtAuthGuard)
+  changeMyPassword(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() changeMyPasswordDto: ChangeMyPasswordDto,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.usersService.changeMyPassword(user.sub, changeMyPasswordDto, {
       ...audit,
       actorId: user.sub,
     });
@@ -267,6 +287,32 @@ export class UsersController {
     @AuditContext() audit: AuditRequestContext,
   ) {
     return this.usersService.invalidateSessions(id, user.sub, {
+      ...audit,
+      actorId: user.sub,
+    });
+  }
+
+  @Patch(":id/password")
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Reset another user's password" })
+  @ApiOkResponse({
+    description: "Password reset and sessions invalidated.",
+    type: UserReadDto,
+  })
+  @ApiBadRequestResponse({ description: "Invalid password payload." })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @ApiForbiddenResponse({ description: "Insufficient permissions." })
+  @ApiNotFoundResponse({ description: "User not found." })
+  @ApiParam({ name: "id", description: "User UUID" })
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions("users:update", "users:password:reset", "users:manage")
+  resetPassword(
+    @CurrentUser() user: CurrentUserPayload,
+    @Param("id") id: string,
+    @Body() resetUserPasswordDto: ResetUserPasswordDto,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.usersService.resetPassword(id, resetUserPasswordDto, user.sub, {
       ...audit,
       actorId: user.sub,
     });
