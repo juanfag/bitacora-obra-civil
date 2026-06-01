@@ -6,6 +6,7 @@
     "web:dev": "next dev apps/web",
     "web:build": "next build apps/web",
     "web:start": "next start apps/web",
+    "bootstrap:superadmin": "tsx scripts/bootstrap-superadmin.ts",
     "test:e2e": "jest --config test/jest-e2e.config.cjs",
     "test:smoke": "npm run test:e2e -- --runTestsByPath test/e2e/daily-log-workflow.e2e-spec.ts"
   },

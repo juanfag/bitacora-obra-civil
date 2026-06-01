@@ -159,6 +159,16 @@ const permissions = [
     description: "Allows soft deleting event types.",
   },
   {
+    code: "roles:read",
+    name: "Read roles",
+    description: "Allows reading role catalogs.",
+  },
+  {
+    code: "roles:assign",
+    name: "Assign roles",
+    description: "Allows assigning roles to users.",
+  },
+  {
     code: "attachments:create",
     name: "Create attachments",
     description: "Allows uploading attachments.",
