@@ -44,6 +44,7 @@ const requiredPermissions = [
   "documents:read",
   "documents:update",
   "documents:delete",
+  "audit:read",
   "users:create",
   "users:read",
   "users:update",

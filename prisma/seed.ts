@@ -26,6 +26,16 @@ const roles = [
     description: "Supervises project execution and records.",
   },
   {
+    code: "PROJECT_ADMIN",
+    name: "Project Admin",
+    description: "Administers an assigned project.",
+  },
+  {
+    code: "AUDITOR",
+    name: "Auditor",
+    description: "Reads assigned project information and audit traces.",
+  },
+  {
     code: "INSPECTOR",
     name: "Inspector",
     description: "Inspects and reads assigned project information.",
@@ -233,6 +243,11 @@ const permissions = [
     name: "Delete documents",
     description: "Allows soft deleting document-control records.",
   },
+  {
+    code: "audit:read",
+    name: "Read audit",
+    description: "Allows reading audit traces.",
+  },
 ];
 
 const rolePermissions: Record<string, string[]> = {
@@ -288,6 +303,32 @@ const rolePermissions: Record<string, string[]> = {
     "documents:create",
     "documents:read",
     "documents:update",
+  ],
+  PROJECT_ADMIN: [
+    "organizations:read",
+    "projects:read",
+    "daily-logs:create",
+    "daily-logs:read",
+    "events:create",
+    "events:read",
+    "daily-log-events:create",
+    "daily-log-events:read",
+    "event-types:read",
+    "attachments:create",
+    "attachments:read",
+    "documents:create",
+    "documents:read",
+  ],
+  AUDITOR: [
+    "organizations:read",
+    "projects:read",
+    "daily-logs:read",
+    "events:read",
+    "daily-log-events:read",
+    "event-types:read",
+    "attachments:read",
+    "documents:read",
+    "audit:read",
   ],
   INSPECTOR: [
     "organizations:read",
