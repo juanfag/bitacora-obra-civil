@@ -6,6 +6,7 @@ import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { PermissionsGuard } from "./guards/permissions.guard";
+import { RbacPermissionResolver } from "./permissions/rbac-permission-resolver";
 import { JwtStrategy } from "./strategies/jwt.strategy";
 
 @Module({
@@ -23,7 +24,19 @@ import { JwtStrategy } from "./strategies/jwt.strategy";
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, PermissionsGuard],
-  exports: [AuthService, JwtModule, JwtAuthGuard, PermissionsGuard],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    PermissionsGuard,
+    RbacPermissionResolver,
+  ],
+  exports: [
+    AuthService,
+    JwtModule,
+    JwtAuthGuard,
+    PermissionsGuard,
+    RbacPermissionResolver,
+  ],
 })
 export class AuthModule {}

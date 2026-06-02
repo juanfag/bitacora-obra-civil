@@ -10,12 +10,14 @@ import { RecordStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { CurrentUserPayload } from "../decorators/current-user.decorator";
 import { PERMISSIONS_KEY } from "../decorators/permissions.decorator";
+import { RbacPermissionResolver } from "../permissions/rbac-permission-resolver";
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
+    private readonly rbacPermissionResolver: RbacPermissionResolver,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -37,8 +39,9 @@ export class PermissionsGuard implements CanActivate {
     }
 
     const userPermissions = await this.getUserPermissions(request.user.sub);
-    const hasPermission = requiredPermissions.some((permission) =>
-      userPermissions.has(permission),
+    const hasPermission = this.rbacPermissionResolver.hasAnyPermission(
+      userPermissions,
+      requiredPermissions,
     );
 
     if (!hasPermission) {

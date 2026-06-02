@@ -6,30 +6,40 @@ import { PrismaService } from "../prisma/prisma.service";
 // platform policy when platform-level roles are formalized.
 const PLATFORM_PROJECT_ACCESS_PERMISSION = "organizations:create";
 
+export type ProjectAccessScopeType =
+  | "GLOBAL"
+  | "ORGANIZATION"
+  | "PROJECT"
+  | "OWN";
+
+export type ProjectAccessResolution = {
+  scopeType: ProjectAccessScopeType;
+  projectIds: string[] | null;
+  reason: "LEGACY_PLATFORM_BYPASS" | "PROJECT_MEMBERSHIP";
+};
+
 @Injectable()
 export class ProjectAccessPolicy {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAccessibleProjectIds(userId: string) {
+  async resolveAccessibleProjects(userId: string): Promise<ProjectAccessResolution> {
     if (await this.hasPlatformProjectAccess(userId)) {
-      return null;
+      return {
+        scopeType: "GLOBAL",
+        projectIds: null,
+        reason: "LEGACY_PLATFORM_BYPASS",
+      };
     }
 
-    const projectMemberships = await this.prisma.projectUser.findMany({
-      where: {
-        userId,
-        status: RecordStatus.ACTIVE,
-        role: {
-          status: RecordStatus.ACTIVE,
-        },
-      },
-      distinct: ["projectId"],
-      select: {
-        projectId: true,
-      },
-    });
+    return {
+      scopeType: "PROJECT",
+      projectIds: await this.getAssignedProjectIds(userId),
+      reason: "PROJECT_MEMBERSHIP",
+    };
+  }
 
-    return projectMemberships.map((membership) => membership.projectId);
+  async getAccessibleProjectIds(userId: string) {
+    return (await this.resolveAccessibleProjects(userId)).projectIds;
   }
 
   async canAccessProject(userId: string, projectId: string) {
@@ -77,5 +87,23 @@ export class ProjectAccessPolicy {
     });
 
     return Boolean(platformAssignment);
+  }
+
+  private async getAssignedProjectIds(userId: string) {
+    const projectMemberships = await this.prisma.projectUser.findMany({
+      where: {
+        userId,
+        status: RecordStatus.ACTIVE,
+        role: {
+          status: RecordStatus.ACTIVE,
+        },
+      },
+      distinct: ["projectId"],
+      select: {
+        projectId: true,
+      },
+    });
+
+    return projectMemberships.map((membership) => membership.projectId);
   }
 }
