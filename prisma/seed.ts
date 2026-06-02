@@ -2,6 +2,10 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as bcrypt from "bcrypt";
+import {
+  rbacV2Permissions,
+  type SeedPermission,
+} from "./rbac-v2-permission-catalog";
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
@@ -250,8 +254,22 @@ const permissions = [
   },
 ];
 
+const mergePermissions = (...permissionGroups: SeedPermission[]) => {
+  const permissionByCode = new Map<string, SeedPermission>();
+
+  for (const permission of permissionGroups) {
+    if (!permissionByCode.has(permission.code)) {
+      permissionByCode.set(permission.code, permission);
+    }
+  }
+
+  return Array.from(permissionByCode.values());
+};
+
+const seedPermissions = mergePermissions(...permissions, ...rbacV2Permissions);
+
 const rolePermissions: Record<string, string[]> = {
-  SUPER_ADMIN: permissions.map((permission) => permission.code),
+  SUPER_ADMIN: seedPermissions.map((permission) => permission.code),
   PROJECT_MANAGER: [
     "organizations:read",
     "organizations:update",
@@ -431,7 +449,7 @@ async function seedBaseCatalogs() {
   );
 
   await Promise.all(
-    permissions.map((permission) =>
+    seedPermissions.map((permission) =>
       prisma.permission.upsert({
         where: { code: permission.code },
         update: {
@@ -466,7 +484,7 @@ async function seedRolePermissions() {
   const persistedPermissions = await prisma.permission.findMany({
     where: {
       code: {
-        in: permissions.map((permission) => permission.code),
+        in: seedPermissions.map((permission) => permission.code),
       },
     },
     select: {
