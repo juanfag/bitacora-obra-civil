@@ -59,6 +59,20 @@ export async function cleanupDailyLogGraph(
       },
     },
   });
+  await prisma.dailyLogDocument.deleteMany({
+    where: {
+      dailyLogId: {
+        in: dailyLogIds,
+      },
+    },
+  });
+  await prisma.dailyLogPdfVersion.deleteMany({
+    where: {
+      dailyLogId: {
+        in: dailyLogIds,
+      },
+    },
+  });
   await prisma.dailyLog.deleteMany({
     where: {
       id: {
@@ -74,6 +88,49 @@ export async function cleanupSmokeProjects(
 ) {
   if (!projectIds.length) {
     return;
+  }
+
+  const documents = await prisma.document.findMany({
+    where: {
+      projectId: {
+        in: projectIds,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+  const documentIds = documents.map((document) => document.id);
+
+  if (documentIds.length) {
+    await prisma.eventDocument.deleteMany({
+      where: {
+        documentId: {
+          in: documentIds,
+        },
+      },
+    });
+    await prisma.dailyLogDocument.deleteMany({
+      where: {
+        documentId: {
+          in: documentIds,
+        },
+      },
+    });
+    await prisma.dailyLogPdfVersion.deleteMany({
+      where: {
+        documentId: {
+          in: documentIds,
+        },
+      },
+    });
+    await prisma.document.deleteMany({
+      where: {
+        id: {
+          in: documentIds,
+        },
+      },
+    });
   }
 
   await prisma.projectUser.deleteMany({
