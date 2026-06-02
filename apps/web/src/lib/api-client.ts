@@ -133,6 +133,23 @@ export type UserRead = {
   updatedAt: string;
 };
 
+export type EffectivePermission = {
+  code: string;
+  name: string;
+  description: string | null;
+  sourceRoles: Array<{
+    id: string;
+    code: string;
+    name: string;
+    projectId: string;
+  }>;
+};
+
+export type MyPermissionsResponse = {
+  permissionCodes: string[];
+  permissions: EffectivePermission[];
+};
+
 export type ProjectSummary = {
   id: string;
   organizationId: string;
@@ -341,6 +358,10 @@ export function getUsers(params: {
 
 export function getUser(userId: string) {
   return apiRequest<UserRead>(`/users/${encodeURIComponent(userId)}`);
+}
+
+export function getMyPermissions() {
+  return apiRequest<MyPermissionsResponse>("/users/me/permissions");
 }
 
 export function getProjects(params: { status?: string } = {}) {

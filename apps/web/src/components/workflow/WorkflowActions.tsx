@@ -28,17 +28,21 @@ const emptyStateByStatus: Record<string, string> = {
 };
 
 type WorkflowActionsProps = {
+  allowedActions?: WorkflowAction[];
   dailyLogStatus: string;
   onRunAction: (action: WorkflowAction) => void;
   processingAction: string | null;
 };
 
 export function WorkflowActions({
+  allowedActions,
   dailyLogStatus,
   onRunAction,
   processingAction,
 }: WorkflowActionsProps) {
-  const availableActions = getAvailableActions(dailyLogStatus);
+  const availableActions = getAvailableActions(dailyLogStatus).filter((action) =>
+    allowedActions ? allowedActions.includes(action) : true,
+  );
 
   if (availableActions.length === 0) {
     return (

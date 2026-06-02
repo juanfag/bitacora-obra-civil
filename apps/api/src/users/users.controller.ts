@@ -143,6 +143,18 @@ export class UsersController {
     });
   }
 
+  @Get("me/permissions")
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Get current user's effective permission codes for UI visibility",
+  })
+  @ApiOkResponse({ description: "Effective permission codes returned." })
+  @ApiUnauthorizedResponse({ description: "Missing, invalid, or expired JWT." })
+  @UseGuards(JwtAuthGuard)
+  getMyPermissions(@CurrentUser() user: CurrentUserPayload) {
+    return this.usersService.getMyPermissions(user.sub);
+  }
+
   @Get()
   @ApiBearerAuth()
   @ApiOperation({ summary: "List users" })

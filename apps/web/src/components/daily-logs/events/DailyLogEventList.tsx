@@ -4,6 +4,7 @@ import { DailyLogEventCard } from "./DailyLogEventCard";
 import { EmptyEventsState } from "./EmptyEventsState";
 
 type DailyLogEventListProps = {
+  canUploadAttachments?: boolean;
   dailyLogStatus: string;
   eventTypes?: EventType[];
   events: DailyLogEvent[];
@@ -11,6 +12,7 @@ type DailyLogEventListProps = {
 };
 
 export function DailyLogEventList({
+  canUploadAttachments = true,
   dailyLogStatus,
   eventTypes = [],
   events,
@@ -31,6 +33,7 @@ export function DailyLogEventList({
             dailyLogStatus={dailyLogStatus}
             event={event}
             eventTypes={eventTypes}
+            canUploadAttachments={canUploadAttachments}
             onAttachmentUpload={onAttachmentUpload}
           />
         </div>

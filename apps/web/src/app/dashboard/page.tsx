@@ -13,6 +13,7 @@ import {
   getDashboardRecentActivity,
 } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
+import { useCurrentPermissions } from "@/lib/use-current-permissions";
 
 type Project = {
   id: string;
@@ -30,6 +31,9 @@ export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const permissions = useCurrentPermissions();
+  const canReadProjects = permissions.can("projects:read");
+  const canReadDailyLogs = permissions.can("daily-logs:read");
 
   useEffect(() => {
     let isMounted = true;
@@ -103,12 +107,16 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="toolbar">
+            {canReadProjects ? (
             <Link className="button" href="/projects">
               Ver proyectos
             </Link>
+            ) : null}
+            {canReadDailyLogs ? (
             <Link className="button secondary" href="/daily-logs">
               Ver bitácoras
             </Link>
+            ) : null}
           </div>
         </div>
 

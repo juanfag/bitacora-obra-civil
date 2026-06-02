@@ -11,6 +11,8 @@ import { DailyLog } from "@/types/daily-log";
 import { DailyLogEvent } from "@/types/daily-log-event";
 
 type DailyLogHeaderProps = {
+  allowedWorkflowActions?: WorkflowAction[];
+  canDownloadPdf?: boolean;
   dailyLog: DailyLog;
   events: DailyLogEvent[];
   signatures: DailyLogSignature[];
@@ -37,6 +39,8 @@ const statusConfig: Record<
 };
 
 export function DailyLogHeader({
+  allowedWorkflowActions,
+  canDownloadPdf = true,
   dailyLog,
   events,
   signatures,
@@ -90,20 +94,23 @@ export function DailyLogHeader({
 
       <section className="daily-log-executive-actions" aria-label="Acciones">
         <WorkflowActions
+          allowedActions={allowedWorkflowActions}
           dailyLogStatus={dailyLog.status}
           onRunAction={onRunWorkflowAction}
           processingAction={processingAction}
         />
         {processingAction ? <p className="muted">Procesando acción...</p> : null}
         <div className="daily-log-secondary-actions">
-          <button
-            className="button secondary"
-            disabled={isDownloadingPdf}
-            onClick={onDownloadPdf}
-            type="button"
-          >
-            {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
-          </button>
+          {canDownloadPdf ? (
+            <button
+              className="button secondary"
+              disabled={isDownloadingPdf}
+              onClick={onDownloadPdf}
+              type="button"
+            >
+              {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
+            </button>
+          ) : null}
           <Link className="button secondary" href={backHref}>
             Volver
           </Link>

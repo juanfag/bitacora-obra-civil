@@ -18,6 +18,7 @@ import {
   updateUserRoles,
 } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
+import { useCurrentPermissions } from "@/lib/use-current-permissions";
 
 export default function UserDetailPage() {
   const params = useParams<{ id: string }>();
@@ -53,6 +54,13 @@ export default function UserDetailPage() {
     newPassword: "",
     confirmPassword: "",
   });
+  const permissions = useCurrentPermissions();
+  const canAdministerUserByPermission = permissions.canAny([
+    "users:manage",
+    "roles:assign",
+    "users:update",
+  ]);
+  const canRunAdminActions = canAdministerUser && canAdministerUserByPermission;
 
   useEffect(() => {
     let isMounted = true;
@@ -191,7 +199,7 @@ export default function UserDetailPage() {
       setSuccess: (message: string | null) => void;
     },
   ) {
-    if (!user || !canAdministerUser) {
+    if (!user || !canRunAdminActions) {
       return;
     }
 
@@ -245,7 +253,7 @@ export default function UserDetailPage() {
   }
 
   async function handleSaveRoles() {
-    if (!user || !canAdministerUser) {
+    if (!user || !canRunAdminActions) {
       return;
     }
 
@@ -266,7 +274,7 @@ export default function UserDetailPage() {
   }
 
   function handleToggleRole(roleKey: string) {
-    if (!canAdministerUser) {
+    if (!canRunAdminActions) {
       return;
     }
 
@@ -287,7 +295,7 @@ export default function UserDetailPage() {
   async function handleAssignProject() {
     if (
       !user ||
-      !canAdministerUser ||
+      !canRunAdminActions ||
       !selectedProjectId ||
       !selectedProjectRoleId
     ) {
@@ -321,7 +329,7 @@ export default function UserDetailPage() {
   }
 
   async function handleRemoveProject(project: UserProject) {
-    if (!user || !canAdministerUser) {
+    if (!user || !canRunAdminActions) {
       return;
     }
 
@@ -350,7 +358,7 @@ export default function UserDetailPage() {
   }
 
   async function handleInvalidateSessions() {
-    if (!user || !canAdministerUser || isInvalidatingSessions) {
+    if (!user || !canRunAdminActions || isInvalidatingSessions) {
       return;
     }
 
@@ -397,7 +405,7 @@ export default function UserDetailPage() {
   async function handleResetPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!user || !canAdministerUser || isResettingPassword) {
+    if (!user || !canRunAdminActions || isResettingPassword) {
       return;
     }
 
@@ -583,7 +591,7 @@ export default function UserDetailPage() {
                       <span>{project.code}</span>
                       <span>{project.organization.name}</span>
                       <span>{project.status}</span>
-                      {canAdministerUser ? (
+                      {canRunAdminActions ? (
                         <button
                           className="button secondary"
                           disabled={isSavingProjects}
@@ -622,7 +630,7 @@ export default function UserDetailPage() {
                 </div>
               ) : null}
 
-              {!canAdministerUser && !isLoadingAdminCatalogs ? (
+              {!canRunAdminActions && !isLoadingAdminCatalogs ? (
                 <div className="audit-state audit-state-error">
                   <span className="audit-state-icon">!</span>
                   <div>
@@ -640,7 +648,7 @@ export default function UserDetailPage() {
               ) : null}
             </section>
 
-            {canAdministerUser ? (
+            {canRunAdminActions ? (
               <>
                 <section className="dashboard-section">
                   <div className="section-heading">
@@ -668,7 +676,7 @@ export default function UserDetailPage() {
                   ) : (
                     <RoleAssignmentMatrix
                       assignableRoles={assignableRoles}
-                      disabled={!canAdministerUser || isSavingRoles}
+                      disabled={!canRunAdminActions || isSavingRoles}
                       onToggleRole={handleToggleRole}
                       projects={user.projects}
                       selectedRoleKeys={selectedRoleKeys}

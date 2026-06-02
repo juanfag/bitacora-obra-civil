@@ -35,6 +35,7 @@ type DocumentEvidence = {
 };
 
 type DailyLogDocumentEvidenceProps = {
+  canDownloadPdf?: boolean;
   evidence: DocumentEvidence | null;
   error: string | null;
   isDownloadingPdf: boolean;
@@ -43,6 +44,7 @@ type DailyLogDocumentEvidenceProps = {
 };
 
 export function DailyLogDocumentEvidence({
+  canDownloadPdf = true,
   evidence,
   error,
   isDownloadingPdf,
@@ -126,14 +128,16 @@ export function DailyLogDocumentEvidence({
               Verificación pública
             </a>
           ) : null}
-          <button
-            className="button"
-            disabled={isDownloadingPdf}
-            onClick={onDownloadPdf}
-            type="button"
-          >
-            {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
-          </button>
+          {canDownloadPdf ? (
+            <button
+              className="button"
+              disabled={isDownloadingPdf}
+              onClick={onDownloadPdf}
+              type="button"
+            >
+              {isDownloadingPdf ? "Descargando..." : "Descargar PDF"}
+            </button>
+          ) : null}
         </div>
       </section>
 

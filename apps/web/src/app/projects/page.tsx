@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiClientError, apiRequest } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
+import { useCurrentPermissions } from "@/lib/use-current-permissions";
 
 type Project = {
   id: string;
@@ -19,6 +20,10 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const permissions = useCurrentPermissions();
+  const canCreateProject = permissions.can("projects:create");
+  const canReadDailyLogs = permissions.can("daily-logs:read");
+  const canReadDocuments = permissions.can("documents:read");
 
   useEffect(() => {
     let isMounted = true;
@@ -81,12 +86,16 @@ export default function ProjectsPage() {
             </p>
           </div>
           <div className="toolbar">
-            <Link className="button" href="/projects/new">
-              Nuevo Proyecto
-            </Link>
-            <Link className="button secondary" href="/daily-logs">
-              Ver bitacoras
-            </Link>
+            {canCreateProject ? (
+              <Link className="button" href="/projects/new">
+                Nuevo Proyecto
+              </Link>
+            ) : null}
+            {canReadDailyLogs ? (
+              <Link className="button secondary" href="/daily-logs">
+                Ver bitacoras
+              </Link>
+            ) : null}
             <button className="button secondary" onClick={handleLogout} type="button">
               Cerrar sesión
             </button>
@@ -127,15 +136,19 @@ export default function ProjectsPage() {
                   Revisa y gestiona las bitacoras de este proyecto.
                 </p>
                 <div className="toolbar">
-                  <Link className="button" href={`/daily-logs?projectId=${project.id}`}>
-                    Ver bitacoras
-                  </Link>
-                  <Link
-                    className="button secondary"
-                    href={`/projects/${project.id}/documents`}
-                  >
-                    Documentos
-                  </Link>
+                  {canReadDailyLogs ? (
+                    <Link className="button" href={`/daily-logs?projectId=${project.id}`}>
+                      Ver bitacoras
+                    </Link>
+                  ) : null}
+                  {canReadDocuments ? (
+                    <Link
+                      className="button secondary"
+                      href={`/projects/${project.id}/documents`}
+                    >
+                      Documentos
+                    </Link>
+                  ) : null}
                 </div>
               </article>
             ))}

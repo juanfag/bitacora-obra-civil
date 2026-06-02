@@ -251,6 +251,92 @@ export class UsersService {
     return toUserReadDto(user);
   }
 
+  async getMyPermissions(userId: string) {
+    const assignments = await this.prisma.projectUser.findMany({
+      where: {
+        userId,
+        status: RecordStatus.ACTIVE,
+        role: {
+          status: RecordStatus.ACTIVE,
+        },
+      },
+      select: {
+        projectId: true,
+        role: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            rolePermissions: {
+              where: {
+                permission: {
+                  status: RecordStatus.ACTIVE,
+                },
+              },
+              select: {
+                permission: {
+                  select: {
+                    code: true,
+                    name: true,
+                    description: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const permissionByCode = new Map<
+      string,
+      {
+        code: string;
+        name: string;
+        description: string | null;
+        sourceRoles: Array<{
+          id: string;
+          code: string;
+          name: string;
+          projectId: string;
+        }>;
+      }
+    >();
+
+    for (const assignment of assignments) {
+      for (const rolePermission of assignment.role.rolePermissions) {
+        const permission = rolePermission.permission;
+        const existingPermission = permissionByCode.get(permission.code);
+        const sourceRole = {
+          id: assignment.role.id,
+          code: assignment.role.code,
+          name: assignment.role.name,
+          projectId: assignment.projectId,
+        };
+
+        if (existingPermission) {
+          existingPermission.sourceRoles.push(sourceRole);
+          continue;
+        }
+
+        permissionByCode.set(permission.code, {
+          code: permission.code,
+          name: permission.name,
+          description: permission.description,
+          sourceRoles: [sourceRole],
+        });
+      }
+    }
+
+    const permissions = [...permissionByCode.values()].sort((left, right) =>
+      left.code.localeCompare(right.code),
+    );
+
+    return {
+      permissionCodes: permissions.map((permission) => permission.code),
+      permissions,
+    };
+  }
+
   async updateRoles(
     targetUserId: string,
     assignUserRolesDto: AssignUserRolesDto,

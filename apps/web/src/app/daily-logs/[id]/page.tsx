@@ -34,6 +34,7 @@ import {
   canCreateDailyLogEvent,
   isDailyLogReadOnly,
 } from "@/lib/daily-log-workflow";
+import { useCurrentPermissions } from "@/lib/use-current-permissions";
 import { DailyLog } from "@/types/daily-log";
 import {
   CreateDailyLogEventInput,
@@ -73,6 +74,12 @@ export default function DailyLogDetailPage() {
   const [signingType, setSigningType] = useState<DailyLogSignatureType | null>(
     null,
   );
+  const permissions = useCurrentPermissions();
+  const canCreateEvent = permissions.can("daily-log-events:create");
+  const canUploadAttachments = permissions.can("attachments:create");
+  const canApplySignature = permissions.can("daily-logs:update");
+  const canDownloadPdf = permissions.can("daily-logs:read");
+  const allowedWorkflowActions = getAllowedWorkflowActions(permissions.can);
 
   const handleUnauthorized = useCallback(() => {
     logout();
@@ -404,6 +411,8 @@ export default function DailyLogDetailPage() {
       <section className="daily-log-detail-shell">
         {dailyLog ? (
           <DailyLogHeader
+            allowedWorkflowActions={allowedWorkflowActions}
+            canDownloadPdf={canDownloadPdf}
             dailyLog={dailyLog}
             events={dailyLogEvents}
             isDownloadingPdf={isDownloadingPdf}
@@ -480,7 +489,7 @@ export default function DailyLogDetailPage() {
                 </p>
               ) : null}
 
-              {canCreateDailyLogEvent(dailyLog.status) ? (
+              {canCreateEvent && canCreateDailyLogEvent(dailyLog.status) ? (
                 <CreateDailyLogEventForm
                   catalogError={eventTypesError}
                   dailyLogStatus={dailyLog.status}
@@ -491,6 +500,7 @@ export default function DailyLogDetailPage() {
               ) : null}
 
               <DailyLogEventList
+                canUploadAttachments={canUploadAttachments}
                 dailyLogStatus={dailyLog.status}
                 events={dailyLogEvents}
                 eventTypes={eventTypes}
@@ -503,6 +513,7 @@ export default function DailyLogDetailPage() {
               title="Evidencia documental"
             >
               <DocumentEvidenceSection
+                canDownloadPdf={canDownloadPdf}
                 evidence={documentEvidence}
                 error={documentEvidenceError}
                 isDownloadingPdf={isDownloadingPdf}
@@ -516,6 +527,7 @@ export default function DailyLogDetailPage() {
               title="Firmas digitales"
             >
               <DigitalSignaturesSection
+                canApplySignature={canApplySignature}
                 dailyLogStatus={dailyLog.status}
                 error={signaturesError}
                 isLoading={isLoadingSignatures}
@@ -580,6 +592,32 @@ type CollectionResponse<T> =
       results?: T[];
     };
 
+function getAllowedWorkflowActions(can: (permission: string) => boolean) {
+  const actions: WorkflowAction[] = [];
+
+  if (can("daily_logs:submit")) {
+    actions.push("submit");
+  }
+
+  if (can("daily_logs:approve")) {
+    actions.push("approve");
+  }
+
+  if (can("daily_logs:reject")) {
+    actions.push("reject");
+  }
+
+  if (can("daily_logs:close")) {
+    actions.push("close");
+  }
+
+  if (can("daily-logs:update")) {
+    actions.push("return-to-draft");
+  }
+
+  return actions;
+}
+
 type DocumentEvidence = {
   dailyLogId: string;
   dailyLogShortId: string;
@@ -615,6 +653,7 @@ type DocumentEvidence = {
 };
 
 function DigitalSignaturesSection({
+  canApplySignature,
   dailyLogStatus,
   error,
   isLoading,
@@ -623,6 +662,7 @@ function DigitalSignaturesSection({
   signingType,
   userSignature,
 }: {
+  canApplySignature: boolean;
   dailyLogStatus: string;
   error: string | null;
   isLoading: boolean;
@@ -633,6 +673,7 @@ function DigitalSignaturesSection({
 }) {
   return (
     <DailyLogSignaturesTable
+      canApplySignature={canApplySignature}
       dailyLogStatus={dailyLogStatus}
       error={error}
       isLoading={isLoading}
@@ -1177,12 +1218,14 @@ function AuditValueSummary({
 }
 
 function DocumentEvidenceSection({
+  canDownloadPdf,
   evidence,
   error,
   isDownloadingPdf,
   isLoading,
   onDownloadPdf,
 }: {
+  canDownloadPdf: boolean;
   evidence: DocumentEvidence | null;
   error: string | null;
   isDownloadingPdf: boolean;
@@ -1191,6 +1234,7 @@ function DocumentEvidenceSection({
 }) {
   return (
     <DailyLogDocumentEvidence
+      canDownloadPdf={canDownloadPdf}
       evidence={evidence}
       error={error}
       isDownloadingPdf={isDownloadingPdf}

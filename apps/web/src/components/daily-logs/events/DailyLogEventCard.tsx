@@ -5,6 +5,7 @@ import { EventAttachmentList } from "./EventAttachmentList";
 import { EventAttachmentUpload } from "./EventAttachmentUpload";
 
 type DailyLogEventCardProps = {
+  canUploadAttachments?: boolean;
   dailyLogStatus: string;
   event: DailyLogEvent;
   eventTypes?: EventType[];
@@ -12,6 +13,7 @@ type DailyLogEventCardProps = {
 };
 
 export function DailyLogEventCard({
+  canUploadAttachments = true,
   dailyLogStatus,
   event,
   eventTypes = [],
@@ -68,7 +70,10 @@ export function DailyLogEventCard({
       <footer className="daily-log-event-footer">
         <EventAttachmentList attachments={event.attachments} />
 
-        {canUploadEventAttachment(dailyLogStatus) && event.id && onAttachmentUpload ? (
+        {canUploadAttachments &&
+        canUploadEventAttachment(dailyLogStatus) &&
+        event.id &&
+        onAttachmentUpload ? (
           <EventAttachmentUpload
             dailyLogEventId={event.id}
             dailyLogStatus={dailyLogStatus}

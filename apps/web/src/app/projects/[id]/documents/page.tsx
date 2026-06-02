@@ -18,6 +18,7 @@ import {
   uploadDocument,
 } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
+import { useCurrentPermissions } from "@/lib/use-current-permissions";
 
 const documentTypes: Array<{ value: DocumentType; label: string }> = [
   { value: "PLANO", label: "Plano" },
@@ -84,6 +85,11 @@ export default function ProjectDocumentsPage() {
   const [canCreate, setCanCreate] = useState(true);
   const [canUpdate, setCanUpdate] = useState(true);
   const [canDelete, setCanDelete] = useState(true);
+  const permissions = useCurrentPermissions();
+  const canCreateDocument = canCreate && permissions.can("documents:create");
+  const canUpdateDocument = canUpdate && permissions.can("documents:update");
+  const canDeleteDocument = canDelete && permissions.can("documents:delete");
+  const canDownloadDocument = permissions.can("documents:download");
   const [formState, setFormState] = useState<FormState>({
     type: "OTRO",
     title: "",
@@ -463,7 +469,7 @@ export default function ProjectDocumentsPage() {
               </div>
             </section>
 
-            {canCreate ? (
+            {canCreateDocument ? (
               <section className="panel">
                 <div className="section-heading">
                   <div>
@@ -703,17 +709,19 @@ export default function ProjectDocumentsPage() {
                               .join(" · ")}
                           </p>
                           <div className="toolbar">
-                            <button
-                              className="button secondary"
-                              disabled={activeDownloadId === document.id}
-                              onClick={() => handleDownload(document)}
-                              type="button"
-                            >
-                              {activeDownloadId === document.id
-                                ? "Descargando..."
-                                : "Descargar"}
-                            </button>
-                            {canUpdate ? (
+                            {canDownloadDocument ? (
+                              <button
+                                className="button secondary"
+                                disabled={activeDownloadId === document.id}
+                                onClick={() => handleDownload(document)}
+                                type="button"
+                              >
+                                {activeDownloadId === document.id
+                                  ? "Descargando..."
+                                  : "Descargar"}
+                              </button>
+                            ) : null}
+                            {canUpdateDocument ? (
                               <button
                                 className="button secondary"
                                 onClick={() => startEdit(document)}
@@ -722,7 +730,7 @@ export default function ProjectDocumentsPage() {
                                 Editar
                               </button>
                             ) : null}
-                            {canDelete && document.status !== "DELETED" ? (
+                            {canDeleteDocument && document.status !== "DELETED" ? (
                               <button
                                 className="button secondary"
                                 disabled={activeDeleteId === document.id}

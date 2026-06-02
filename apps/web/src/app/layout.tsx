@@ -1,14 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AppNavigation } from "@/components/app-navigation";
 import { SessionContextHeader } from "@/components/session-context-header";
 import "./globals.css";
-
-const navigation = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/projects", label: "Proyectos" },
-  { href: "/daily-logs", label: "Bitácoras" },
-  { href: "/users", label: "Usuarios" },
-];
 
 export const metadata: Metadata = {
   title: "Bitacora de Obra",
@@ -28,13 +22,7 @@ export default function RootLayout({
             <Link href="/dashboard" className="brand">
               Bitacora
             </Link>
-            <nav className="nav" aria-label="Navegacion principal">
-              {navigation.map((item) => (
-                <Link key={item.href} href={item.href}>
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
+            <AppNavigation />
             <SessionContextHeader />
           </header>
           <main className="main">{children}</main>

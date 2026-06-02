@@ -14,6 +14,7 @@ type SignatureRole = {
 };
 
 type DailyLogSignaturesTableProps = {
+  canApplySignature?: boolean;
   dailyLogStatus: string;
   error: string | null;
   isLoading: boolean;
@@ -42,6 +43,7 @@ const signatureRoles: SignatureRole[] = [
 ];
 
 export function DailyLogSignaturesTable({
+  canApplySignature = true,
   dailyLogStatus,
   error,
   isLoading,
@@ -52,7 +54,8 @@ export function DailyLogSignaturesTable({
 }: DailyLogSignaturesTableProps) {
   const canSign =
     dailyLogStatus === "APPROVED" || dailyLogStatus === "CLOSED";
-  const canUseMasterSignature = canSign && Boolean(userSignature?.hasSignature);
+  const canUseMasterSignature =
+    canApplySignature && canSign && Boolean(userSignature?.hasSignature);
 
   return (
     <div className="daily-log-signatures-block">
@@ -69,6 +72,9 @@ export function DailyLogSignaturesTable({
             Debes registrar tu firma en <Link href="/profile#mi-firma">Mi perfil</Link>{" "}
             antes de firmar.
           </p>
+        ) : null}
+        {!canApplySignature ? (
+          <p>No tienes permiso para aplicar firmas en esta bitÃ¡cora.</p>
         ) : null}
       </div>
 

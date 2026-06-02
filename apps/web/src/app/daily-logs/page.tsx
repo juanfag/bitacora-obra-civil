@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { ApiClientError, apiRequest } from "@/lib/api-client";
 import { logout } from "@/lib/auth";
+import { useCurrentPermissions } from "@/lib/use-current-permissions";
 
 type DailyLog = {
   id: string;
@@ -32,6 +33,8 @@ export default function DailyLogsPage() {
   const [dailyLogs, setDailyLogs] = useState<DailyLog[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const permissions = useCurrentPermissions();
+  const canCreateDailyLog = permissions.can("daily-logs:create");
 
   useEffect(() => {
     const selectedProjectId = new URLSearchParams(window.location.search).get(
@@ -112,7 +115,7 @@ export default function DailyLogsPage() {
             </p>
           </div>
           <div className="toolbar">
-            {projectId ? (
+            {projectId && canCreateDailyLog ? (
               <Link
                 className="button"
                 href={`/daily-logs/new?projectId=${encodeURIComponent(projectId)}`}
