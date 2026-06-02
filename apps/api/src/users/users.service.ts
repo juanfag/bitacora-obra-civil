@@ -50,6 +50,24 @@ type ExistingRoleAssignment = {
   status: RecordStatus;
 };
 
+type RbacRoleAssignmentSnapshot = {
+  projectId: string;
+  projectCode: string;
+  projectName: string;
+  organizationId: string;
+  organizationName: string;
+  roleId: string;
+  roleCode: string;
+  roleName: string;
+};
+
+type RbacTargetUserSnapshot = {
+  id: string;
+  fullName: string;
+  email: string;
+  status: UserStatus;
+};
+
 type AdminRoleRemovalCandidate = ExistingRoleAssignment & {
   role: {
     code: string;
@@ -246,6 +264,9 @@ export class UsersService {
       where: { id: targetUserId },
       select: {
         id: true,
+        fullName: true,
+        email: true,
+        status: true,
       },
     });
 
@@ -402,6 +423,12 @@ export class UsersService {
         roles: newAssignments,
       },
     });
+    await this.recordRbacRoleAssignmentAudit({
+      audit,
+      targetUser,
+      oldAssignments,
+      newAssignments,
+    });
 
     return this.findOne(targetUserId, actorUserId);
   }
@@ -434,6 +461,8 @@ export class UsersService {
       where: { id: targetUserId },
       select: {
         id: true,
+        fullName: true,
+        email: true,
         status: true,
         blockedReason: true,
         tokenVersion: true,
@@ -531,6 +560,37 @@ export class UsersService {
         },
       });
     }
+    await this.auditService.record({
+      ...audit,
+      action: "RBAC_USER_STATUS_CHANGED",
+      entity: "RBAC",
+      entityId: targetUserId,
+      targetUserSnapshot: buildTargetUserSnapshot(targetUser),
+      oldValue: {
+        status: targetUser.status,
+        blockedReason: targetUser.blockedReason,
+        tokenVersion: targetUser.tokenVersion,
+      },
+      newValue: {
+        status: updatedUser.status,
+        blockedReason: updatedUser.blockedReason,
+        tokenVersion: updatedUser.tokenVersion,
+        sessionsInvalidated: shouldInvalidateSessions,
+        reason: updateUserStatusDto.reason ?? null,
+      },
+      metadata: buildRbacAuditMetadata({
+        entityType: "User",
+        entityId: targetUserId,
+        action: "RBAC_USER_STATUS_CHANGED",
+        actorId: audit.actorId,
+        targetUser: buildTargetUserSnapshot(targetUser),
+        metadata: {
+          previousStatus: targetUser.status,
+          nextStatus: updatedUser.status,
+          sessionsInvalidated: shouldInvalidateSessions,
+        },
+      }),
+    });
 
     return this.findOne(targetUserId, actorUserId);
   }
@@ -1552,7 +1612,7 @@ export class UsersService {
   private async findUserRoleAssignments(
     userId: string,
     assignmentScope: Prisma.ProjectUserWhereInput,
-  ) {
+  ): Promise<RbacRoleAssignmentSnapshot[]> {
     const assignments = await this.prisma.projectUser.findMany({
       where: {
         userId,
@@ -1570,7 +1630,14 @@ export class UsersService {
         },
         project: {
           select: {
+            code: true,
             name: true,
+            organizationId: true,
+            organization: {
+              select: {
+                name: true,
+              },
+            },
           },
         },
       },
@@ -1581,11 +1648,159 @@ export class UsersService {
 
     return assignments.map((assignment) => ({
       projectId: assignment.projectId,
+      projectCode: assignment.project.code,
       projectName: assignment.project.name,
+      organizationId: assignment.project.organizationId,
+      organizationName: assignment.project.organization.name,
       roleId: assignment.roleId,
       roleCode: assignment.role.code,
       roleName: assignment.role.name,
     }));
+  }
+
+  private async recordRbacRoleAssignmentAudit(input: {
+    audit: AuditRequestContext;
+    targetUser: RbacTargetUserSnapshot;
+    oldAssignments: RbacRoleAssignmentSnapshot[];
+    newAssignments: RbacRoleAssignmentSnapshot[];
+  }) {
+    const oldByKey = new Map(
+      input.oldAssignments.map((assignment) => [
+        assignmentKey(assignment),
+        assignment,
+      ]),
+    );
+    const newByKey = new Map(
+      input.newAssignments.map((assignment) => [
+        assignmentKey(assignment),
+        assignment,
+      ]),
+    );
+    const targetUserSnapshot = buildTargetUserSnapshot(input.targetUser);
+
+    for (const assignment of input.newAssignments) {
+      if (oldByKey.has(assignmentKey(assignment))) {
+        continue;
+      }
+
+      const roleSnapshot = buildRoleSnapshot(assignment);
+      const projectSnapshot = buildProjectSnapshot(assignment);
+      const scopeSnapshot = buildProjectScopeSnapshot(assignment);
+
+      await this.auditService.record({
+        ...input.audit,
+        action: "RBAC_ROLE_ASSIGNED",
+        entity: "RBAC",
+        entityId: input.targetUser.id,
+        targetUserSnapshot,
+        roleSnapshot,
+        scopeSnapshot,
+        projectSnapshot,
+        newValue: {
+          assignment,
+        },
+        metadata: buildRbacAuditMetadata({
+          entityType: "ProjectUser",
+          entityId: input.targetUser.id,
+          action: "RBAC_ROLE_ASSIGNED",
+          actorId: input.audit.actorId,
+          targetUser: targetUserSnapshot,
+          metadata: {
+            roleCode: assignment.roleCode,
+            projectId: assignment.projectId,
+            scopeType: "PROJECT",
+          },
+        }),
+      });
+      await this.auditService.record({
+        ...input.audit,
+        action: "RBAC_PROJECT_ACCESS_GRANTED",
+        entity: "RBAC",
+        entityId: input.targetUser.id,
+        targetUserSnapshot,
+        roleSnapshot,
+        scopeSnapshot,
+        projectSnapshot,
+        newValue: {
+          projectAccess: assignment,
+        },
+        metadata: buildRbacAuditMetadata({
+          entityType: "ProjectUser",
+          entityId: input.targetUser.id,
+          action: "RBAC_PROJECT_ACCESS_GRANTED",
+          actorId: input.audit.actorId,
+          targetUser: targetUserSnapshot,
+          metadata: {
+            projectId: assignment.projectId,
+            projectCode: assignment.projectCode,
+            roleCode: assignment.roleCode,
+            scopeType: "PROJECT",
+          },
+        }),
+      });
+    }
+
+    for (const assignment of input.oldAssignments) {
+      if (newByKey.has(assignmentKey(assignment))) {
+        continue;
+      }
+
+      const roleSnapshot = buildRoleSnapshot(assignment);
+      const projectSnapshot = buildProjectSnapshot(assignment);
+      const scopeSnapshot = buildProjectScopeSnapshot(assignment);
+
+      await this.auditService.record({
+        ...input.audit,
+        action: "RBAC_ROLE_REMOVED",
+        entity: "RBAC",
+        entityId: input.targetUser.id,
+        targetUserSnapshot,
+        roleSnapshot,
+        scopeSnapshot,
+        projectSnapshot,
+        oldValue: {
+          assignment,
+        },
+        metadata: buildRbacAuditMetadata({
+          entityType: "ProjectUser",
+          entityId: input.targetUser.id,
+          action: "RBAC_ROLE_REMOVED",
+          actorId: input.audit.actorId,
+          targetUser: targetUserSnapshot,
+          metadata: {
+            roleCode: assignment.roleCode,
+            projectId: assignment.projectId,
+            scopeType: "PROJECT",
+          },
+        }),
+      });
+      await this.auditService.record({
+        ...input.audit,
+        action: "RBAC_PROJECT_ACCESS_REMOVED",
+        entity: "RBAC",
+        entityId: input.targetUser.id,
+        targetUserSnapshot,
+        roleSnapshot,
+        scopeSnapshot,
+        projectSnapshot,
+        oldValue: {
+          projectAccess: assignment,
+        },
+        metadata: buildRbacAuditMetadata({
+          entityType: "ProjectUser",
+          entityId: input.targetUser.id,
+          action: "RBAC_PROJECT_ACCESS_REMOVED",
+          actorId: input.audit.actorId,
+          targetUser: targetUserSnapshot,
+          metadata: {
+            projectId: assignment.projectId,
+            projectCode: assignment.projectCode,
+            roleCode: assignment.roleCode,
+            scopeType: "PROJECT",
+          },
+        }),
+      });
+    }
   }
 
   private async getUserPermissionCodes(userId: string) {
@@ -1794,6 +2009,66 @@ function normalizeRoleAssignments(
 
 function assignmentKey(assignment: { projectId: string; roleId: string }) {
   return `${assignment.projectId}:${assignment.roleId}`;
+}
+
+function buildTargetUserSnapshot(user: RbacTargetUserSnapshot) {
+  return {
+    id: user.id,
+    fullName: user.fullName,
+    email: user.email,
+    status: user.status,
+  };
+}
+
+function buildRoleSnapshot(assignment: RbacRoleAssignmentSnapshot) {
+  return {
+    id: assignment.roleId,
+    code: assignment.roleCode,
+    name: assignment.roleName,
+  };
+}
+
+function buildProjectSnapshot(assignment: RbacRoleAssignmentSnapshot) {
+  return {
+    id: assignment.projectId,
+    code: assignment.projectCode,
+    name: assignment.projectName,
+    organizationId: assignment.organizationId,
+    organizationName: assignment.organizationName,
+  };
+}
+
+function buildProjectScopeSnapshot(assignment: RbacRoleAssignmentSnapshot) {
+  return {
+    scopeType: "PROJECT",
+    projectId: assignment.projectId,
+    projectCode: assignment.projectCode,
+    projectName: assignment.projectName,
+    organizationId: assignment.organizationId,
+  };
+}
+
+function buildRbacAuditMetadata(input: {
+  entityType: string;
+  entityId: string;
+  action: string;
+  actorId: string;
+  targetUser: ReturnType<typeof buildTargetUserSnapshot>;
+  metadata: Record<string, unknown>;
+}) {
+  return {
+    entityType: input.entityType,
+    entityId: input.entityId,
+    action: input.action,
+    actor: {
+      id: input.actorId,
+    },
+    target: {
+      user: input.targetUser,
+    },
+    metadata: input.metadata,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 function roleHasAdminPermission(role: {

@@ -161,6 +161,15 @@ enum AuditAction {
   USER_PASSWORD_CHANGED
   USER_PASSWORD_RESET
   DAILY_LOG_SIGNATURE_APPLIED
+  RBAC_ROLE_ASSIGNED
+  RBAC_ROLE_REMOVED
+  RBAC_PERMISSION_GRANTED
+  RBAC_PERMISSION_REVOKED
+  RBAC_SCOPE_CHANGED
+  RBAC_PROJECT_ACCESS_GRANTED
+  RBAC_PROJECT_ACCESS_REMOVED
+  RBAC_USER_STATUS_CHANGED
+  RBAC_ROLE_MAPPING_UPDATED
 
   @@map("audit_action")
 }
@@ -701,6 +710,12 @@ model AuditLog {
   newValue      Json?       @map("new_value") @db.JsonB
   actorNameSnapshot  String? @map("actor_name_snapshot") @db.VarChar(200)
   actorEmailSnapshot String? @map("actor_email_snapshot") @db.VarChar(150)
+  targetUserSnapshot Json?   @map("target_user_snapshot") @db.JsonB
+  roleSnapshot       Json?   @map("role_snapshot") @db.JsonB
+  permissionSnapshot Json?   @map("permission_snapshot") @db.JsonB
+  scopeSnapshot      Json?   @map("scope_snapshot") @db.JsonB
+  projectSnapshot    Json?   @map("project_snapshot") @db.JsonB
+  metadata           Json?   @db.JsonB
   ipAddress     String?     @map("ip_address") @db.VarChar(80)
   deviceInfo    String?     @map("device_info")
   createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamp(6)

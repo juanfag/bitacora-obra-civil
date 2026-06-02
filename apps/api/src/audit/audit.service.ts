@@ -28,6 +28,18 @@ export class AuditService {
         newValue: input.newValue as Prisma.InputJsonValue | undefined,
         actorNameSnapshot: actorSnapshot?.fullName,
         actorEmailSnapshot: actorSnapshot?.email,
+        targetUserSnapshot: input.targetUserSnapshot as
+          | Prisma.InputJsonValue
+          | undefined,
+        roleSnapshot: input.roleSnapshot as Prisma.InputJsonValue | undefined,
+        permissionSnapshot: input.permissionSnapshot as
+          | Prisma.InputJsonValue
+          | undefined,
+        scopeSnapshot: input.scopeSnapshot as Prisma.InputJsonValue | undefined,
+        projectSnapshot: input.projectSnapshot as
+          | Prisma.InputJsonValue
+          | undefined,
+        metadata: input.metadata as Prisma.InputJsonValue | undefined,
         ipAddress: input.ip,
         deviceInfo: input.userAgent,
       },
