@@ -15,6 +15,22 @@ import { CreateDailyLogEventDto } from "./dto/create-daily-log-event.dto";
 import { FindDailyLogEventsQueryDto } from "./dto/find-daily-log-events-query.dto";
 import { UpdateDailyLogEventDto } from "./dto/update-daily-log-event.dto";
 
+const dailyLogEventInclude = {
+  eventType: {
+    select: {
+      code: true,
+      description: true,
+      name: true,
+    },
+  },
+  reportedBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+} satisfies Prisma.DailyLogEventInclude;
+
 @Injectable()
 export class DailyLogEventsService {
   constructor(
@@ -46,6 +62,7 @@ export class DailyLogEventsService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.dailyLogEvent.findMany({
         where,
+        include: dailyLogEventInclude,
         skip: (page - 1) * limit,
         take: limit,
         orderBy: {
@@ -98,6 +115,7 @@ export class DailyLogEventsService {
           reportedById: audit.actorId,
           reportedAt: this.toDate(createDailyLogEventDto.reportedAt),
         },
+        include: dailyLogEventInclude,
       });
 
       await this.auditService.record({
@@ -155,6 +173,7 @@ export class DailyLogEventsService {
             ? this.toDate(updateDailyLogEventDto.reportedAt)
             : undefined,
         },
+        include: dailyLogEventInclude,
       });
 
       await this.auditService.record({
@@ -185,6 +204,7 @@ export class DailyLogEventsService {
       data: {
         deletedAt: new Date(),
       },
+      include: dailyLogEventInclude,
     });
 
     await this.auditService.record({
@@ -270,6 +290,8 @@ export class DailyLogEventsService {
       },
       include: {
         dailyLog: true,
+        eventType: dailyLogEventInclude.eventType,
+        reportedBy: dailyLogEventInclude.reportedBy,
       },
     });
 
@@ -305,14 +327,28 @@ export class DailyLogEventsService {
     return new Date(value);
   }
 
-  private toResponse(event: DailyLogEvent) {
+  private toResponse(
+    event: DailyLogEvent & {
+      eventType?: {
+        code: string;
+        description: string | null;
+        name: string;
+      } | null;
+      reportedBy?: {
+        email: string | null;
+        fullName: string | null;
+      } | null;
+    },
+  ) {
     return {
       id: event.id,
       dailyLogId: event.dailyLogId,
       eventTypeId: event.eventTypeId,
+      eventType: event.eventType,
       activity: event.activity,
       executionDescription: event.executionDescription,
       reportedById: event.reportedById,
+      reportedBy: event.reportedBy,
       reportedAt: event.reportedAt,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,

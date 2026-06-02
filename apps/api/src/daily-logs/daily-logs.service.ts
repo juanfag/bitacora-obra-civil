@@ -18,6 +18,40 @@ import { FindDailyLogsQueryDto } from "./dto/find-daily-logs-query.dto";
 import { RejectDailyLogDto } from "./dto/reject-daily-log.dto";
 import { UpdateDailyLogDto } from "./dto/update-daily-log.dto";
 
+const dailyLogDetailInclude = {
+  approvedBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+  createdBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+  project: {
+    select: {
+      code: true,
+      id: true,
+      name: true,
+    },
+  },
+  reviewedBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+  updatedBy: {
+    select: {
+      email: true,
+      fullName: true,
+    },
+  },
+} satisfies Prisma.DailyLogInclude;
+
 @Injectable()
 export class DailyLogsService {
   constructor(
@@ -70,6 +104,15 @@ export class DailyLogsService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.dailyLog.findMany({
         where,
+        include: {
+          project: {
+            select: {
+              code: true,
+              id: true,
+              name: true,
+            },
+          },
+        },
         skip: (page - 1) * limit,
         take: limit,
         orderBy: {
@@ -112,6 +155,7 @@ export class DailyLogsService {
           not: DailyLogStatus.VOIDED,
         },
       },
+      include: dailyLogDetailInclude,
     });
 
     if (!dailyLog) {
@@ -302,7 +346,15 @@ export class DailyLogsService {
         entityName: true,
         id: true,
         newValue: true,
+        actorEmailSnapshot: true,
+        actorNameSnapshot: true,
         oldValue: true,
+        performedBy: {
+          select: {
+            email: true,
+            fullName: true,
+          },
+        },
         performedById: true,
       },
     });
@@ -317,6 +369,10 @@ export class DailyLogsService {
         entity: item.entityName,
         entityId: item.entityId,
         userId: item.performedById,
+        userName: item.actorNameSnapshot ?? item.performedBy?.fullName ?? null,
+        userEmail: item.actorEmailSnapshot ?? item.performedBy?.email ?? null,
+        actorNameSnapshot: item.actorNameSnapshot,
+        actorEmailSnapshot: item.actorEmailSnapshot,
         createdAt: item.createdAt.toISOString(),
         oldValue: sanitizeAuditValue(item.oldValue),
         newValue: sanitizeAuditValue(item.newValue),
@@ -424,6 +480,7 @@ export class DailyLogsService {
           reviewedById: null,
           reviewedAt: null,
           approvedById: null,
+          approvedByNameSnapshot: null,
           approvedAt: null,
           closedAt: null,
           deletedById: null,

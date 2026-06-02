@@ -545,7 +545,7 @@ export default function DailyLogDetailPage() {
               <div className="daily-log-metadata-grid">
                 <p>
                   <strong>Proyecto</strong>
-                  <span>{formatTechnicalId(dailyLog.projectId)}</span>
+                  <span>{getDailyLogProjectLabel(dailyLog)}</span>
                 </p>
                 <p>
                   <strong>Creado</strong>
@@ -1260,6 +1260,17 @@ function formatTechnicalId(value: string) {
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
 
+function getDailyLogProjectLabel(dailyLog: DailyLog) {
+  const projectCode = dailyLog.project?.code || dailyLog.projectCode;
+  const projectName = dailyLog.project?.name || dailyLog.projectName;
+
+  if (projectCode && projectName) {
+    return `${projectCode} - ${projectName}`;
+  }
+
+  return projectName || projectCode || "Proyecto no disponible";
+}
+
 function formatAuditAction(action: string) {
   const labels: Record<string, string> = {
     APPROVE: "Aprobación",
@@ -1380,14 +1391,16 @@ function getAuditActorCandidate(item: DailyLogAuditResponse["items"][number]) {
     userName?: string | null;
   };
   const candidate =
+    record.actorNameSnapshot ||
     record.userName ||
+    record.actorEmailSnapshot ||
+    record.userEmail ||
     record.user?.fullName ||
     record.user?.name ||
     record.user?.email ||
     record.actor?.fullName ||
     record.actor?.name ||
     record.actor?.email ||
-    record.userEmail ||
     null;
 
   if (!candidate || isSensitiveAuditText(candidate) || isUuidLike(candidate)) {

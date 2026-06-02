@@ -209,16 +209,11 @@ function getDailyLogProjectLabel(dailyLog: DailyLog) {
 }
 
 function getResponsibleLabel(dailyLog: DailyLog) {
-  const dailyLogWithResponsible = dailyLog as DailyLog & {
-    createdBy?: UserLabel | null;
-    responsible?: UserLabel | null;
-    user?: UserLabel | null;
-  };
-
   return (
-    getUserLabel(dailyLogWithResponsible.responsible) ||
-    getUserLabel(dailyLogWithResponsible.createdBy) ||
-    getUserLabel(dailyLogWithResponsible.user) ||
+    dailyLog.responsibleNameSnapshot ||
+    getUserLabel(dailyLog.responsible) ||
+    getUserLabel(dailyLog.createdBy) ||
+    getUserLabel(dailyLog.user) ||
     "Responsable no disponible"
   );
 }

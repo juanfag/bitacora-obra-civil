@@ -663,9 +663,17 @@ export class DailyLogPdfService {
         take: 5,
         select: {
           action: true,
+          actorEmailSnapshot: true,
+          actorNameSnapshot: true,
           createdAt: true,
           entityId: true,
           entityName: true,
+          performedBy: {
+            select: {
+              email: true,
+              fullName: true,
+            },
+          },
           performedById: true,
         },
       }),
@@ -679,6 +687,8 @@ export class DailyLogPdfService {
         entityId: item.entityId,
         entityName: item.entityName,
         performedById: item.performedById,
+        userName: item.actorNameSnapshot ?? item.performedBy?.fullName ?? null,
+        userEmail: item.actorEmailSnapshot ?? item.performedBy?.email ?? null,
       })),
     };
   }
@@ -1142,7 +1152,10 @@ function addGeneralInfoSection(
     ["Proyecto", formatProjectName(dailyLog.project.name, dailyLog.project.code)],
     ["Organización", dailyLog.project.organization?.name],
     ["Ubicación", dailyLog.project.location],
-    ["Responsable / creador", formatPerson(dailyLog.createdBy)],
+    [
+      "Responsable / creador",
+      dailyLog.responsibleNameSnapshot || formatPerson(dailyLog.createdBy),
+    ],
     ["Fecha de bitácora", formatDate(dailyLog.logDate)],
     ["Fecha de creación", formatDateTime(dailyLog.createdAt)],
     ["Fecha de aprobación", formatDateTime(dailyLog.approvedAt)],
@@ -1275,6 +1288,7 @@ function addControlAndSignaturesSection(
 type WorkflowActionSummary = {
   comments?: string | null;
   date?: Date | null;
+  userLabel?: string | null;
   user?: { email: string | null; fullName: string | null } | null;
 };
 
@@ -1301,6 +1315,7 @@ function buildWorkflowTransitionSummary(
     approved: {
       comments: approved?.comments ?? null,
       date: dailyLog.approvedAt ?? approved?.changedAt ?? null,
+      userLabel: dailyLog.approvedByNameSnapshot,
       user: dailyLog.approvedBy ?? approved?.changedBy ?? null,
     },
     closed: {
@@ -1341,7 +1356,7 @@ function formatWorkflowAction(action: WorkflowActionSummary) {
   }
 
   const details = [
-    action.user ? formatPerson(action.user) : "No aplicado",
+    action.userLabel || (action.user ? formatPerson(action.user) : "No aplicado"),
     formatDateTime(action.date),
     action.comments ? `Motivo: ${sanitizeText(action.comments)}` : null,
   ].filter((value) => value && value !== "No disponible");

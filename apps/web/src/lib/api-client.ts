@@ -199,6 +199,10 @@ export type DailyLogAuditItem = {
   entity: string;
   entityId: string;
   userId: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  actorNameSnapshot?: string | null;
+  actorEmailSnapshot?: string | null;
   createdAt: string;
   oldValue: unknown;
   newValue: unknown;

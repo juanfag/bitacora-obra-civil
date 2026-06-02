@@ -8,6 +8,16 @@ export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   async record(input: AuditLogInput) {
+    const actorSnapshot = input.actorId
+      ? await this.prisma.user.findUnique({
+          where: { id: input.actorId },
+          select: {
+            email: true,
+            fullName: true,
+          },
+        })
+      : null;
+
     await this.prisma.auditLog.create({
       data: {
         entityName: input.entity,
@@ -16,6 +26,8 @@ export class AuditService {
         performedById: input.actorId,
         oldValue: input.oldValue as Prisma.InputJsonValue | undefined,
         newValue: input.newValue as Prisma.InputJsonValue | undefined,
+        actorNameSnapshot: actorSnapshot?.fullName,
+        actorEmailSnapshot: actorSnapshot?.email,
         ipAddress: input.ip,
         deviceInfo: input.userAgent,
       },

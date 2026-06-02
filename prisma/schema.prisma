@@ -377,6 +377,8 @@ model DailyLog {
   approvedAt   DateTime?      @map("approved_at") @db.Timestamp(6)
   closedAt     DateTime?      @map("closed_at") @db.Timestamp(6)
   comments     String?
+  responsibleNameSnapshot String? @map("responsible_name_snapshot") @db.VarChar(200)
+  approvedByNameSnapshot  String? @map("approved_by_name_snapshot") @db.VarChar(200)
   updatedById  String?        @map("updated_by") @db.Uuid
   deletedById  String?        @map("deleted_by") @db.Uuid
   createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
@@ -697,6 +699,8 @@ model AuditLog {
   performedById String?     @map("performed_by") @db.Uuid
   oldValue      Json?       @map("old_value") @db.JsonB
   newValue      Json?       @map("new_value") @db.JsonB
+  actorNameSnapshot  String? @map("actor_name_snapshot") @db.VarChar(200)
+  actorEmailSnapshot String? @map("actor_email_snapshot") @db.VarChar(150)
   ipAddress     String?     @map("ip_address") @db.VarChar(80)
   deviceInfo    String?     @map("device_info")
   createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamp(6)

@@ -7,6 +7,7 @@ type DocumentEvidence = {
       createdAt: string;
       entityId: string;
       entityName: string;
+      userEmail?: string | null;
       userName?: string | null;
       user?: {
         fullName?: string | null;
@@ -285,5 +286,11 @@ function formatAuditAction(action: string) {
 }
 
 function formatAuditUser(item: DocumentEvidence["auditSummary"]["latest"][number]) {
-  return item.userName || item.user?.fullName || item.user?.email || "Usuario no disponible";
+  return (
+    item.userName ||
+    item.userEmail ||
+    item.user?.fullName ||
+    item.user?.email ||
+    "Usuario no disponible"
+  );
 }

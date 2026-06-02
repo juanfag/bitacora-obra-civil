@@ -68,6 +68,7 @@ export class DailyLogWorkflowService {
           reviewedById: null,
           reviewedAt: null,
           approvedById: null,
+          approvedByNameSnapshot: null,
           approvedAt: null,
           closedAt: null,
           updatedById: audit.actorId,
@@ -100,14 +101,21 @@ export class DailyLogWorkflowService {
     this.ensureTransitionAllowed(currentDailyLog, [DailyLogStatus.IN_REVIEW]);
 
     const now = new Date();
+    const actorName = await this.getUserNameSnapshot(audit.actorId);
+    const responsibleName =
+      currentDailyLog.responsibleNameSnapshot ??
+      getUserName(currentDailyLog.createdBy) ??
+      actorName;
     const dailyLog = await this.prisma.$transaction(async (tx) => {
       const updatedDailyLog = await tx.dailyLog.update({
         where: { id },
         data: {
           status: DailyLogStatus.APPROVED,
+          responsibleNameSnapshot: responsibleName,
           reviewedById: audit.actorId,
           reviewedAt: now,
           approvedById: audit.actorId,
+          approvedByNameSnapshot: actorName,
           approvedAt: now,
           updatedById: audit.actorId,
           approvals: {
@@ -158,6 +166,7 @@ export class DailyLogWorkflowService {
           reviewedById: audit.actorId,
           reviewedAt: now,
           approvedById: null,
+          approvedByNameSnapshot: null,
           approvedAt: null,
           comments: rejectDailyLogDto.comment,
           updatedById: audit.actorId,
@@ -198,11 +207,22 @@ export class DailyLogWorkflowService {
     const currentDailyLog = await this.findActiveDailyLog(id);
     this.ensureTransitionAllowed(currentDailyLog, [DailyLogStatus.APPROVED]);
 
+    const actorName = await this.getUserNameSnapshot(audit.actorId);
+    const responsibleName =
+      currentDailyLog.responsibleNameSnapshot ??
+      getUserName(currentDailyLog.createdBy) ??
+      actorName;
+    const approvedByName =
+      currentDailyLog.approvedByNameSnapshot ??
+      getUserName(currentDailyLog.approvedBy) ??
+      actorName;
     const dailyLog = await this.prisma.$transaction(async (tx) => {
       const updatedDailyLog = await tx.dailyLog.update({
         where: { id },
         data: {
           status: DailyLogStatus.CLOSED,
+          responsibleNameSnapshot: responsibleName,
+          approvedByNameSnapshot: approvedByName,
           closedAt: new Date(),
           updatedById: audit.actorId,
         },
@@ -243,6 +263,7 @@ export class DailyLogWorkflowService {
           status: DailyLogStatus.DRAFT,
           reviewedById: null,
           reviewedAt: null,
+          approvedByNameSnapshot: null,
           updatedById: audit.actorId,
         },
       });
@@ -276,6 +297,20 @@ export class DailyLogWorkflowService {
           not: DailyLogStatus.VOIDED,
         },
       },
+      include: {
+        approvedBy: {
+          select: {
+            email: true,
+            fullName: true,
+          },
+        },
+        createdBy: {
+          select: {
+            email: true,
+            fullName: true,
+          },
+        },
+      },
     });
 
     if (!dailyLog) {
@@ -283,6 +318,18 @@ export class DailyLogWorkflowService {
     }
 
     return dailyLog;
+  }
+
+  private async getUserNameSnapshot(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        fullName: true,
+      },
+    });
+
+    return getUserName(user);
   }
 
   private ensureTransitionAllowed(
@@ -345,4 +392,14 @@ export class DailyLogWorkflowService {
       },
     });
   }
+}
+
+function getUserName(
+  user: { email: string | null; fullName: string | null } | null | undefined,
+) {
+  if (!user) {
+    return null;
+  }
+
+  return user.fullName || user.email || null;
 }
