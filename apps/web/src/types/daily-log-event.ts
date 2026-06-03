@@ -1,4 +1,5 @@
 import { Attachment } from "./attachment";
+import { RelatedDocument } from "@/lib/api-client";
 
 export type UserSummary = {
   fullName?: string | null;
@@ -27,6 +28,7 @@ export type DailyLogEvent = {
   reportedBy?: UserSummary | null;
   user?: UserSummary | null;
   attachments?: Attachment[] | null;
+  relatedDocuments?: RelatedDocument[] | null;
   attachmentCount?: number | null;
   attachmentsCount?: number | null;
 };

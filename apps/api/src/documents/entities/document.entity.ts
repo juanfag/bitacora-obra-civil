@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { DocumentStatus, DocumentType } from "@prisma/client";
+import { DocumentStatus, DocumentType, DocumentVisibility } from "@prisma/client";
 
 export class DocumentEntity {
   @ApiProperty()
@@ -16,6 +16,12 @@ export class DocumentEntity {
 
   @ApiPropertyOptional()
   eventId!: string | null;
+
+  @ApiPropertyOptional()
+  categoryId!: string | null;
+
+  @ApiPropertyOptional()
+  code!: string | null;
 
   @ApiProperty({ enum: DocumentType })
   type!: DocumentType;
@@ -38,6 +44,9 @@ export class DocumentEntity {
   @ApiProperty({ enum: DocumentStatus })
   status!: DocumentStatus;
 
+  @ApiProperty({ enum: DocumentVisibility })
+  visibility!: DocumentVisibility;
+
   @ApiPropertyOptional()
   metadata!: Record<string, unknown> | null;
 
@@ -45,10 +54,26 @@ export class DocumentEntity {
   uploadedById!: string;
 
   @ApiPropertyOptional()
+  createdById!: string | null;
+
+  @ApiPropertyOptional()
+  updatedById!: string | null;
+
+  @ApiPropertyOptional()
+  deletedById!: string | null;
+
+  @ApiPropertyOptional()
   uploadedBy!: {
     id: string;
     fullName: string;
     email: string;
+  } | null;
+
+  @ApiPropertyOptional()
+  category!: {
+    id: string;
+    code: string;
+    name: string;
   } | null;
 
   @ApiProperty()

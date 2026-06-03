@@ -3,6 +3,14 @@ import { DocumentType } from "@prisma/client";
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
 
 export class UploadDocumentDto {
+  @ApiPropertyOptional({
+    description: "Existing document UUID. When provided, upload creates a new version.",
+    example: "018f63f4-4937-7784-9ef5-5b51f6c02b49",
+  })
+  @IsUUID()
+  @IsOptional()
+  documentId?: string;
+
   @ApiProperty({ example: "018f63f4-4937-7784-9ef5-5b51f6c02b4a" })
   @IsUUID()
   projectId!: string;

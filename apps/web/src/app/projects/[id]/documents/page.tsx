@@ -7,11 +7,19 @@ import { AuthGuard } from "@/components/auth-guard";
 import {
   ApiClientError,
   ControlledDocument,
+  DocumentCategory,
   DocumentStatus,
   DocumentType,
+  DocumentVersion,
+  DocumentVisibility,
   ProjectSummary,
+  createDocument,
   deleteDocument,
   downloadDocument,
+  downloadDocumentVersion,
+  getDocument,
+  getDocumentCategories,
+  getDocumentVersions,
   getDocuments,
   getProject,
   updateDocument,
@@ -20,98 +28,115 @@ import {
 import { logout } from "@/lib/auth";
 import { useCurrentPermissions } from "@/lib/use-current-permissions";
 
-const documentTypes: Array<{ value: DocumentType; label: string }> = [
-  { value: "PLANO", label: "Plano" },
-  { value: "SOLICITUD_SUSPENSION", label: "Solicitud de suspension" },
-  { value: "DENUNCIA", label: "Denuncia" },
-  { value: "DEMANDA", label: "Demanda" },
-  { value: "ACTA", label: "Acta" },
-  { value: "SOPORTE_FOTOGRAFICO", label: "Soporte fotografico" },
-  { value: "CONTRATO", label: "Contrato" },
-  { value: "OTRO", label: "Otro" },
-];
-
 const documentStatuses: Array<{ value: DocumentStatus; label: string }> = [
+  { value: "DRAFT", label: "Borrador" },
   { value: "ACTIVE", label: "Activo" },
+  { value: "IN_REVIEW", label: "En revision" },
+  { value: "APPROVED", label: "Aprobado" },
+  { value: "REJECTED", label: "Rechazado" },
   { value: "ARCHIVED", label: "Archivado" },
+  { value: "SUPERSEDED", label: "Reemplazado" },
   { value: "DELETED", label: "Eliminado" },
 ];
 
-const allowedMimeTypes = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+const documentVisibilities: Array<{
+  value: DocumentVisibility;
+  label: string;
+}> = [
+  { value: "PRIVATE", label: "Privado" },
+  { value: "PROJECT", label: "Proyecto" },
+  { value: "ORGANIZATION", label: "Organizacion" },
+  { value: "PUBLIC_VERIFICATION", label: "Verificacion publica" },
+  { value: "RESTRICTED", label: "Restringido" },
 ];
-const maxFileSizeBytes = 10 * 1024 * 1024;
 
-type FormState = {
-  type: DocumentType;
+const allowedUploadMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
+const maxUploadSizeBytes = 10 * 1024 * 1024;
+
+type DocumentFormState = {
   title: string;
+  code: string;
+  categoryId: string;
+  status: DocumentStatus;
+  visibility: DocumentVisibility;
   description: string;
-  metadata: string;
-  file: File | null;
 };
 
-type EditState = {
+type EditState = DocumentFormState & {
   id: string;
-  title: string;
-  description: string;
-  type: DocumentType;
-  status: DocumentStatus;
+};
+
+const emptyFormState: DocumentFormState = {
+  title: "",
+  code: "",
+  categoryId: "",
+  status: "ACTIVE",
+  visibility: "PROJECT",
+  description: "",
 };
 
 export default function ProjectDocumentsPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const projectId = params.id;
-  const [project, setProject] = useState<ProjectSummary | null>(null);
-  const [documents, setDocuments] = useState<ControlledDocument[]>([]);
-  const [typeFilter, setTypeFilter] = useState<DocumentType | "">("");
-  const [statusFilter, setStatusFilter] = useState<DocumentStatus | "">("ACTIVE");
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [editError, setEditError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [activeDownloadId, setActiveDownloadId] = useState<string | null>(null);
-  const [activeDeleteId, setActiveDeleteId] = useState<string | null>(null);
-  const [editState, setEditState] = useState<EditState | null>(null);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
-  const [canCreate, setCanCreate] = useState(true);
-  const [canUpdate, setCanUpdate] = useState(true);
-  const [canDelete, setCanDelete] = useState(true);
   const permissions = useCurrentPermissions();
-  const canCreateDocument = canCreate && permissions.can("documents:create");
-  const canUpdateDocument = canUpdate && permissions.can("documents:update");
-  const canDeleteDocument = canDelete && permissions.can("documents:delete");
+  const canCreateDocument = permissions.can("documents:create");
+  const canUpdateDocument = permissions.can("documents:update");
+  const canDeleteDocument = permissions.can("documents:delete");
   const canDownloadDocument = permissions.can("documents:download");
-  const [formState, setFormState] = useState<FormState>({
-    type: "OTRO",
-    title: "",
-    description: "",
-    metadata: "",
-    file: null,
-  });
 
-  const pageTitle = useMemo(() => {
-    if (project?.code && project?.name) {
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [categories, setCategories] = useState<DocumentCategory[]>([]);
+  const [documents, setDocuments] = useState<ControlledDocument[]>([]);
+  const [versionsByDocumentId, setVersionsByDocumentId] = useState<
+    Record<string, DocumentVersion[]>
+  >({});
+  const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<DocumentStatus | "">("ACTIVE");
+  const [visibilityFilter, setVisibilityFilter] = useState<DocumentVisibility | "">(
+    "",
+  );
+  const [search, setSearch] = useState("");
+  const [formState, setFormState] = useState<DocumentFormState>(emptyFormState);
+  const [editState, setEditState] = useState<EditState | null>(null);
+  const [uploadDocumentId, setUploadDocumentId] = useState<string | null>(null);
+  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [activeUploadId, setActiveUploadId] = useState<string | null>(null);
+  const [activeDownloadId, setActiveDownloadId] = useState<string | null>(null);
+  const [activeVersionDownloadId, setActiveVersionDownloadId] = useState<
+    string | null
+  >(null);
+  const [activeDeleteId, setActiveDeleteId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const projectTitle = useMemo(() => {
+    if (project?.code && project.name) {
       return `${project.code} - ${project.name}`;
     }
 
     return project?.name ?? "Proyecto";
   }, [project]);
 
-  useEffect(() => {
-    void loadDocuments();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, typeFilter, statusFilter]);
+  const visibleCategories = useMemo(() => {
+    return categories.filter(
+      (category) => !category.projectId || category.projectId === projectId,
+    );
+  }, [categories, projectId]);
 
-  async function loadDocuments() {
+  useEffect(() => {
+    void loadLibrary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, categoryFilter, statusFilter, visibilityFilter, search]);
+
+  async function loadLibrary() {
     if (!projectId) {
       setError("Proyecto no disponible.");
       setIsLoading(false);
@@ -123,21 +148,38 @@ export default function ProjectDocumentsPage() {
     setActionError(null);
 
     try {
-      const [projectResponse, documentsResponse] = await Promise.all([
-        getProject(projectId),
-        getDocuments({
-          projectId,
-          type: typeFilter,
-          status: statusFilter,
-          limit: 100,
-        }),
-      ]);
+      const [projectResponse, categoriesResponse, documentsResponse] =
+        await Promise.all([
+          getProject(projectId),
+          getDocumentCategories(),
+          getDocuments({
+            projectId,
+            categoryId: categoryFilter,
+            status: statusFilter,
+            visibility: visibilityFilter,
+            search,
+            limit: 100,
+          }),
+        ]);
 
       setProject(projectResponse);
+      setCategories(categoriesResponse);
       setDocuments(documentsResponse.items);
+
+      const versionEntries = await Promise.all(
+        documentsResponse.items.map(async (document) => {
+          try {
+            return [document.id, await getDocumentVersions(document.id)] as const;
+          } catch {
+            return [document.id, []] as const;
+          }
+        }),
+      );
+
+      setVersionsByDocumentId(Object.fromEntries(versionEntries));
     } catch (caughtError) {
       handleApiError(caughtError, {
-        fallback: "No fue posible cargar los documentos.",
+        fallback: "No fue posible cargar la biblioteca documental.",
         setMessage: setError,
       });
     } finally {
@@ -145,110 +187,68 @@ export default function ProjectDocumentsPage() {
     }
   }
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    setUploadError(null);
-
-    if (!file) {
-      setFormState((current) => ({ ...current, file: null }));
-      return;
-    }
-
-    if (!allowedMimeTypes.includes(file.type)) {
-      setUploadError("El tipo de archivo no esta permitido.");
-      event.target.value = "";
-      return;
-    }
-
-    if (file.size > maxFileSizeBytes) {
-      setUploadError("El archivo supera el limite de 10 MB.");
-      event.target.value = "";
-      return;
-    }
-
-    setFormState((current) => ({
-      ...current,
-      file,
-      title: current.title || file.name.replace(/\.[^.]+$/, ""),
-    }));
-  }
-
-  async function handleUpload(event: FormEvent<HTMLFormElement>) {
+  async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!projectId || !formState.file) {
-      setUploadError("Selecciona un archivo para cargar.");
+    if (!projectId) {
+      setFormError("Proyecto no disponible.");
       return;
     }
 
     if (!formState.title.trim()) {
-      setUploadError("El titulo es obligatorio.");
+      setFormError("El titulo es obligatorio.");
       return;
     }
 
-    if (formState.metadata.trim()) {
-      try {
-        JSON.parse(formState.metadata);
-      } catch {
-        setUploadError("La metadata debe ser JSON valido.");
-        return;
-      }
-    }
-
-    const body = new FormData();
-    body.append("projectId", projectId);
-    body.append("type", formState.type);
-    body.append("title", formState.title.trim());
-    body.append("file", formState.file);
-
-    if (formState.description.trim()) {
-      body.append("description", formState.description.trim());
-    }
-
-    if (formState.metadata.trim()) {
-      body.append("metadata", formState.metadata.trim());
-    }
-
-    setIsUploading(true);
-    setUploadError(null);
+    setIsSaving(true);
+    setFormError(null);
     setSuccess(null);
 
     try {
-      await uploadDocument(body);
-      setFormState({
-        type: "OTRO",
-        title: "",
-        description: "",
-        metadata: "",
-        file: null,
+      await createDocument({
+        projectId,
+        categoryId: formState.categoryId || undefined,
+        code: formState.code.trim() || undefined,
+        type: getDocumentTypeForCategory(formState.categoryId, visibleCategories),
+        title: formState.title.trim(),
+        description: formState.description.trim() || null,
+        status: formState.status,
+        visibility: formState.visibility,
       });
-      setSuccess("Documento cargado correctamente.");
-      await loadDocuments();
+      setFormState(emptyFormState);
+      setSuccess("Documento creado correctamente.");
+      await loadLibrary();
     } catch (caughtError) {
-      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
-        setCanCreate(false);
-        setUploadError("No tienes permisos para cargar documentos.");
-        return;
-      }
-
       handleApiError(caughtError, {
-        fallback: "No fue posible cargar el documento.",
-        setMessage: setUploadError,
+        fallback: "No fue posible crear el documento.",
+        setMessage: setFormError,
       });
     } finally {
-      setIsUploading(false);
+      setIsSaving(false);
     }
   }
 
-  function startEdit(document: ControlledDocument) {
-    setEditError(null);
-    setEditState({
-      id: document.id,
-      title: document.title,
-      description: document.description ?? "",
-      type: document.type,
-      status: document.status,
-    });
+  async function startEdit(document: ControlledDocument) {
+    setActionError(null);
+    setFormError(null);
+
+    try {
+      const detail = await getDocument(document.id);
+      setEditState({
+        id: detail.id,
+        title: detail.title,
+        code: detail.code ?? "",
+        categoryId: detail.categoryId ?? "",
+        status: detail.status,
+        visibility: detail.visibility,
+        description: detail.description ?? "",
+      });
+    } catch (caughtError) {
+      handleApiError(caughtError, {
+        fallback: "No fue posible cargar el documento.",
+        setMessage: setActionError,
+      });
+    }
   }
 
   async function handleSaveEdit(event: FormEvent<HTMLFormElement>) {
@@ -259,68 +259,40 @@ export default function ProjectDocumentsPage() {
     }
 
     if (!editState.title.trim()) {
-      setEditError("El titulo es obligatorio.");
+      setFormError("El titulo es obligatorio.");
       return;
     }
 
     setIsSavingEdit(true);
-    setEditError(null);
+    setFormError(null);
     setSuccess(null);
 
     try {
       await updateDocument(editState.id, {
+        categoryId: editState.categoryId || null,
+        code: editState.code.trim() || null,
+        type: getDocumentTypeForCategory(editState.categoryId, visibleCategories),
         title: editState.title.trim(),
         description: editState.description.trim() || null,
-        type: editState.type,
         status: editState.status,
+        visibility: editState.visibility,
       });
       setEditState(null);
       setSuccess("Documento actualizado correctamente.");
-      await loadDocuments();
+      await loadLibrary();
     } catch (caughtError) {
-      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
-        setCanUpdate(false);
-        setEditError("No tienes permisos para editar documentos.");
-        return;
-      }
-
       handleApiError(caughtError, {
         fallback: "No fue posible actualizar el documento.",
-        setMessage: setEditError,
+        setMessage: setFormError,
       });
     } finally {
       setIsSavingEdit(false);
     }
   }
 
-  async function handleDownload(document: ControlledDocument) {
-    setActiveDownloadId(document.id);
-    setActionError(null);
-
-    try {
-      const response = await downloadDocument(document.id);
-      const url = URL.createObjectURL(response.blob);
-      const link = window.document.createElement("a");
-
-      link.href = url;
-      link.download = response.fileName ?? document.fileName ?? "documento";
-      window.document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (caughtError) {
-      handleApiError(caughtError, {
-        fallback: "No fue posible descargar el documento.",
-        setMessage: setActionError,
-      });
-    } finally {
-      setActiveDownloadId(null);
-    }
-  }
-
   async function handleDelete(document: ControlledDocument) {
     const confirmed = window.confirm(
-      `¿Seguro que deseas eliminar el documento "${document.title}"?`,
+      `Seguro que deseas eliminar el documento "${document.title}"?`,
     );
 
     if (!confirmed) {
@@ -334,14 +306,8 @@ export default function ProjectDocumentsPage() {
     try {
       await deleteDocument(document.id);
       setSuccess("Documento eliminado correctamente.");
-      await loadDocuments();
+      await loadLibrary();
     } catch (caughtError) {
-      if (caughtError instanceof ApiClientError && caughtError.status === 403) {
-        setCanDelete(false);
-        setActionError("No tienes permisos para eliminar documentos.");
-        return;
-      }
-
       handleApiError(caughtError, {
         fallback: "No fue posible eliminar el documento.",
         setMessage: setActionError,
@@ -349,6 +315,163 @@ export default function ProjectDocumentsPage() {
     } finally {
       setActiveDeleteId(null);
     }
+  }
+
+  async function handleDownloadCurrent(document: ControlledDocument) {
+    const currentVersion = getCurrentVersion(versionsByDocumentId[document.id] ?? []);
+
+    setActiveDownloadId(document.id);
+    setActionError(null);
+
+    try {
+      const response = currentVersion
+        ? await downloadDocumentVersion(currentVersion.id)
+        : await downloadDocument(document.id);
+      const url = URL.createObjectURL(response.blob);
+      const link = window.document.createElement("a");
+
+      link.href = url;
+      link.download =
+        response.fileName ??
+        currentVersion?.originalFileName ??
+        currentVersion?.fileName ??
+        document.fileName ??
+        "documento";
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (caughtError) {
+      handleApiError(caughtError, {
+        fallback: "No fue posible descargar la version actual.",
+        setMessage: setActionError,
+      });
+    } finally {
+      setActiveDownloadId(null);
+    }
+  }
+
+  async function handleDownloadVersion(version: DocumentVersion) {
+    setActiveVersionDownloadId(version.id);
+    setActionError(null);
+
+    try {
+      const response = await downloadDocumentVersion(version.id);
+      const url = URL.createObjectURL(response.blob);
+      const link = window.document.createElement("a");
+
+      link.href = url;
+      link.download =
+        response.fileName ??
+        version.originalFileName ??
+        version.fileName ??
+        `documento-v${version.versionNumber}`;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (caughtError) {
+      handleApiError(caughtError, {
+        fallback: "No fue posible descargar la version.",
+        setMessage: setActionError,
+      });
+    } finally {
+      setActiveVersionDownloadId(null);
+    }
+  }
+
+  function startUpload(document: ControlledDocument) {
+    setUploadDocumentId((current) => (current === document.id ? null : document.id));
+    setSelectedUploadFile(null);
+    setUploadError(null);
+    setActionError(null);
+  }
+
+  function handleUploadFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    setUploadError(null);
+
+    if (!file) {
+      setSelectedUploadFile(null);
+      return;
+    }
+
+    const validationError = validateUploadFile(file);
+
+    if (validationError) {
+      setSelectedUploadFile(null);
+      setUploadError(validationError);
+      event.target.value = "";
+      return;
+    }
+
+    setSelectedUploadFile(file);
+  }
+
+  async function handleUploadSubmit(
+    event: FormEvent<HTMLFormElement>,
+    document: ControlledDocument,
+  ) {
+    event.preventDefault();
+
+    if (!selectedUploadFile) {
+      setUploadError("Selecciona un archivo PDF, JPG o PNG para cargar.");
+      return;
+    }
+
+    const validationError = validateUploadFile(selectedUploadFile);
+
+    if (validationError) {
+      setUploadError(validationError);
+      return;
+    }
+
+    const body = new FormData();
+    const categoryId = document.categoryId ?? "";
+
+    body.append("file", selectedUploadFile);
+    body.append("documentId", document.id);
+    body.append("projectId", document.projectId);
+    body.append("type", getDocumentTypeForCategory(categoryId, visibleCategories));
+    body.append("title", document.title);
+
+    if (document.description) {
+      body.append("description", document.description);
+    }
+
+    body.append(
+      "metadata",
+      JSON.stringify({
+        source: "document_library_frontend",
+        organizationId: document.organizationId,
+        categoryId: document.categoryId,
+        code: document.code,
+      }),
+    );
+
+    setActiveUploadId(document.id);
+    setUploadError(null);
+    setSuccess(null);
+
+    try {
+      await uploadDocument(body);
+      setUploadDocumentId(null);
+      setSelectedUploadFile(null);
+      setSuccess("Archivo cargado correctamente. La version actual fue actualizada.");
+      await loadLibrary();
+      setExpandedVersionId(document.id);
+    } catch (caughtError) {
+      handleApiError(caughtError, {
+        fallback: "No fue posible cargar el archivo.",
+        setMessage: setUploadError,
+      });
+    } finally {
+      setActiveUploadId(null);
+    }
+  }
+
+  function toggleVersions(documentId: string) {
+    setExpandedVersionId((current) => (current === documentId ? null : documentId));
   }
 
   function handleApiError(
@@ -362,12 +485,22 @@ export default function ProjectDocumentsPage() {
     }
 
     if (caughtError instanceof ApiClientError && caughtError.status === 403) {
-      options.setMessage("No tienes permisos para acceder a estos documentos.");
+      options.setMessage("No tienes permisos para realizar esta accion.");
+      return;
+    }
+
+    if (caughtError instanceof ApiClientError && caughtError.status === 400) {
+      options.setMessage(caughtError.message || "La solicitud no es valida.");
       return;
     }
 
     if (caughtError instanceof ApiClientError && caughtError.status === 404) {
       options.setMessage("Proyecto o documento no encontrado.");
+      return;
+    }
+
+    if (caughtError instanceof ApiClientError && caughtError.status >= 500) {
+      options.setMessage("Error del servidor. Intenta nuevamente mas tarde.");
       return;
     }
 
@@ -384,8 +517,8 @@ export default function ProjectDocumentsPage() {
         <div className="page-header">
           <div>
             <p className="eyebrow">Control documental</p>
-            <h1>Documentos del proyecto</h1>
-            <p className="muted">{pageTitle}</p>
+            <h1>Biblioteca documental</h1>
+            <p className="muted">{projectTitle}</p>
           </div>
           <div className="toolbar">
             <Link className="button secondary" href="/projects">
@@ -402,7 +535,7 @@ export default function ProjectDocumentsPage() {
 
         {isLoading ? (
           <div className="panel">
-            <p className="muted">Cargando documentos...</p>
+            <p className="muted">Cargando biblioteca documental...</p>
           </div>
         ) : null}
 
@@ -419,23 +552,29 @@ export default function ProjectDocumentsPage() {
                 <div>
                   <h2>Filtros</h2>
                   <p className="muted">
-                    Consulta documentos por tipo y estado documental.
+                    Busca por titulo, codigo, categoria, estado o visibilidad.
                   </p>
                 </div>
               </div>
-              <div className="documents-filters">
+              <div className="documents-filters documents-filters-wide">
                 <label>
-                  Tipo
+                  Busqueda
+                  <input
+                    placeholder="Titulo, codigo o descripcion"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Categoria
                   <select
-                    value={typeFilter}
-                    onChange={(event) =>
-                      setTypeFilter(event.target.value as DocumentType | "")
-                    }
+                    value={categoryFilter}
+                    onChange={(event) => setCategoryFilter(event.target.value)}
                   >
-                    <option value="">Todos los tipos</option>
-                    {documentTypes.map((type) => (
-                      <option key={type.value} value={type.value}>
-                        {type.label}
+                    <option value="">Todas las categorias</option>
+                    {visibleCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
                       </option>
                     ))}
                   </select>
@@ -456,15 +595,35 @@ export default function ProjectDocumentsPage() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Visibilidad
+                  <select
+                    value={visibilityFilter}
+                    onChange={(event) =>
+                      setVisibilityFilter(
+                        event.target.value as DocumentVisibility | "",
+                      )
+                    }
+                  >
+                    <option value="">Todas</option>
+                    {documentVisibilities.map((visibility) => (
+                      <option key={visibility.value} value={visibility.value}>
+                        {visibility.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   className="button secondary"
                   onClick={() => {
-                    setTypeFilter("");
+                    setSearch("");
+                    setCategoryFilter("");
                     setStatusFilter("ACTIVE");
+                    setVisibilityFilter("");
                   }}
                   type="button"
                 >
-                  Limpiar filtros
+                  Limpiar
                 </button>
               </div>
             </section>
@@ -473,89 +632,22 @@ export default function ProjectDocumentsPage() {
               <section className="panel">
                 <div className="section-heading">
                   <div>
-                    <h2>Cargar documento</h2>
+                    <h2>Crear documento</h2>
                     <p className="muted">
-                      PDF, imagen, Word o Excel hasta 10 MB.
+                      Registro metadata-only. La carga de archivos queda para la
+                      siguiente etapa documental.
                     </p>
                   </div>
                 </div>
-                <form className="form documents-form" onSubmit={handleUpload}>
-                  <div className="field">
-                    <label htmlFor="document-file">Archivo</label>
-                    <input
-                      accept={allowedMimeTypes.join(",")}
-                      id="document-file"
-                      onChange={handleFileChange}
-                      type="file"
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="document-type">Tipo</label>
-                    <select
-                      id="document-type"
-                      value={formState.type}
-                      onChange={(event) =>
-                        setFormState((current) => ({
-                          ...current,
-                          type: event.target.value as DocumentType,
-                        }))
-                      }
-                    >
-                      {documentTypes.map((type) => (
-                        <option key={type.value} value={type.value}>
-                          {type.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="document-title">Titulo</label>
-                    <input
-                      id="document-title"
-                      maxLength={250}
-                      value={formState.title}
-                      onChange={(event) =>
-                        setFormState((current) => ({
-                          ...current,
-                          title: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="document-description">Descripcion</label>
-                    <textarea
-                      id="document-description"
-                      rows={3}
-                      value={formState.description}
-                      onChange={(event) =>
-                        setFormState((current) => ({
-                          ...current,
-                          description: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="document-metadata">Metadata JSON opcional</label>
-                    <textarea
-                      id="document-metadata"
-                      placeholder='{"revision":"A"}'
-                      rows={3}
-                      value={formState.metadata}
-                      onChange={(event) =>
-                        setFormState((current) => ({
-                          ...current,
-                          metadata: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  {uploadError ? <p className="form-error">{uploadError}</p> : null}
-                  <button className="button" disabled={isUploading} type="submit">
-                    {isUploading ? "Cargando..." : "Subir documento"}
-                  </button>
-                </form>
+                <DocumentMetadataForm
+                  categories={visibleCategories}
+                  error={formError}
+                  isSaving={isSaving}
+                  onChange={setFormState}
+                  onSubmit={handleCreate}
+                  state={formState}
+                  submitLabel="Crear documento"
+                />
               </section>
             ) : null}
 
@@ -564,189 +656,196 @@ export default function ProjectDocumentsPage() {
                 <div>
                   <h2>Documentos</h2>
                   <p className="muted">
-                    {documents.length} documentos visibles para este proyecto.
+                    {documents.length} registros visibles para este proyecto.
                   </p>
                 </div>
               </div>
 
               {success ? <p className="form-success">{success}</p> : null}
               {actionError ? <p className="form-error">{actionError}</p> : null}
-              {editError ? <p className="form-error">{editError}</p> : null}
 
               {documents.length === 0 ? (
                 <div className="empty-state">
                   <h3>Sin documentos</h3>
                   <p className="muted">
-                    Cuando se carguen documentos del proyecto apareceran aqui.
+                    Crea registros documentales para iniciar la biblioteca del
+                    proyecto.
                   </p>
                 </div>
               ) : (
-                <div className="documents-list">
-                  {documents.map((document) => (
-                    <article className="card document-card" key={document.id}>
-                      {editState?.id === document.id ? (
-                        <form className="form documents-form" onSubmit={handleSaveEdit}>
-                          <div className="field">
-                            <label>Titulo</label>
-                            <input
-                              maxLength={250}
-                              value={editState.title}
-                              onChange={(event) =>
+                <div className="documents-table" role="table">
+                  <div className="documents-table-row documents-table-head" role="row">
+                    <span role="columnheader">Documento</span>
+                    <span role="columnheader">Categoria</span>
+                    <span role="columnheader">Estado</span>
+                    <span role="columnheader">Visibilidad</span>
+                    <span role="columnheader">Version</span>
+                    <span role="columnheader">Actualizacion</span>
+                    <span role="columnheader">Acciones</span>
+                  </div>
+                  {documents.map((document) => {
+                    const versions = versionsByDocumentId[document.id] ?? [];
+                    const currentVersion = getCurrentVersion(versions);
+
+                    return (
+                      <article
+                        className="documents-table-group"
+                        key={document.id}
+                      >
+                        {editState?.id === document.id ? (
+                          <div className="documents-edit-row">
+                            <DocumentMetadataForm
+                              categories={visibleCategories}
+                              error={formError}
+                              isSaving={isSavingEdit}
+                              onCancel={() => setEditState(null)}
+                              onChange={(nextState) =>
                                 setEditState((current) =>
-                                  current
-                                    ? { ...current, title: event.target.value }
-                                    : current,
+                                  current ? { ...current, ...nextState } : current,
                                 )
                               }
+                              onSubmit={handleSaveEdit}
+                              state={editState}
+                              submitLabel="Guardar cambios"
                             />
                           </div>
-                          <div className="field">
-                            <label>Tipo</label>
-                            <select
-                              value={editState.type}
-                              onChange={(event) =>
-                                setEditState((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        type: event.target.value as DocumentType,
-                                      }
-                                    : current,
-                                )
-                              }
-                            >
-                              {documentTypes.map((type) => (
-                                <option key={type.value} value={type.value}>
-                                  {type.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="field">
-                            <label>Estado</label>
-                            <select
-                              value={editState.status}
-                              onChange={(event) =>
-                                setEditState((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        status: event.target
-                                          .value as DocumentStatus,
-                                      }
-                                    : current,
-                                )
-                              }
-                            >
-                              {documentStatuses.map((status) => (
-                                <option key={status.value} value={status.value}>
-                                  {status.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="field">
-                            <label>Descripcion</label>
-                            <textarea
-                              rows={3}
-                              value={editState.description}
-                              onChange={(event) =>
-                                setEditState((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        description: event.target.value,
-                                      }
-                                    : current,
-                                )
-                              }
-                            />
-                          </div>
-                          <div className="toolbar">
-                            <button
-                              className="button"
-                              disabled={isSavingEdit}
-                              type="submit"
-                            >
-                              {isSavingEdit ? "Guardando..." : "Guardar"}
-                            </button>
-                            <button
-                              className="button secondary"
-                              onClick={() => setEditState(null)}
-                              type="button"
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </form>
-                      ) : (
-                        <>
-                          <div className="document-card-header">
-                            <div>
-                              <div className="status-row">
-                                <span className="badge">
-                                  {formatDocumentType(document.type)}
-                                </span>
+                        ) : (
+                          <>
+                            <div className="documents-table-row" role="row">
+                              <span className="document-title-cell" role="cell">
+                                <strong>{document.title}</strong>
+                                <small>{document.code || "Sin codigo"}</small>
+                              </span>
+                              <span role="cell">
+                                {document.category?.name ?? "Sin categoria"}
+                              </span>
+                              <span role="cell">
                                 <span className="badge">
                                   {formatDocumentStatus(document.status)}
                                 </span>
-                              </div>
-                              <h3>{document.title}</h3>
-                              <p className="muted">{document.fileName}</p>
+                              </span>
+                              <span role="cell">
+                                {formatDocumentVisibility(document.visibility)}
+                              </span>
+                              <span role="cell">
+                                <span className="document-version-cell">
+                                  <span className="badge">
+                                    {currentVersion
+                                      ? `V${currentVersion.versionNumber}`
+                                      : "Sin archivo"}
+                                  </span>
+                                  {currentVersion ? (
+                                    <small>
+                                      {[
+                                        currentVersion.originalFileName ??
+                                          currentVersion.fileName,
+                                        currentVersion.mimeType,
+                                        formatFileSize(currentVersion.sizeBytes),
+                                        currentVersion.checksumSha256
+                                          ? `SHA256 ${currentVersion.checksumSha256.slice(
+                                              0,
+                                              12,
+                                            )}...`
+                                          : null,
+                                        formatDateTime(currentVersion.createdAt),
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" | ")}
+                                    </small>
+                                  ) : null}
+                                </span>
+                              </span>
+                              <span role="cell">
+                                {formatDateTime(document.updatedAt)}
+                              </span>
+                              <span className="documents-actions" role="cell">
+                                <button
+                                  className="button secondary"
+                                  onClick={() => toggleVersions(document.id)}
+                                  type="button"
+                                >
+                                  Ver versiones
+                                </button>
+                                {canCreateDocument ? (
+                                  <button
+                                    className="button secondary"
+                                    disabled={activeUploadId === document.id}
+                                    onClick={() => startUpload(document)}
+                                    type="button"
+                                  >
+                                    Cargar archivo
+                                  </button>
+                                ) : null}
+                                {canDownloadDocument ? (
+                                  <button
+                                    className="button secondary"
+                                    disabled={
+                                      activeDownloadId === document.id ||
+                                      (!currentVersion && !document.mimeType)
+                                    }
+                                    onClick={() => handleDownloadCurrent(document)}
+                                    type="button"
+                                  >
+                                    {activeDownloadId === document.id
+                                      ? "Descargando..."
+                                      : "Descargar version actual"}
+                                  </button>
+                                ) : null}
+                                {canUpdateDocument ? (
+                                  <button
+                                    className="button secondary"
+                                    onClick={() => startEdit(document)}
+                                    type="button"
+                                  >
+                                    Editar
+                                  </button>
+                                ) : null}
+                                {canDeleteDocument &&
+                                document.status !== "DELETED" ? (
+                                  <button
+                                    className="button secondary"
+                                    disabled={activeDeleteId === document.id}
+                                    onClick={() => handleDelete(document)}
+                                    type="button"
+                                  >
+                                    {activeDeleteId === document.id
+                                      ? "Eliminando..."
+                                      : "Eliminar"}
+                                  </button>
+                                ) : null}
+                              </span>
                             </div>
-                          </div>
-                          {document.description ? <p>{document.description}</p> : null}
-                          <p className="muted">
-                            {[
-                              document.mimeType,
-                              formatFileSize(document.sizeBytes),
-                              formatDateTime(document.createdAt),
-                              document.uploadedBy?.fullName ??
-                                document.uploadedBy?.email ??
-                                "Usuario no disponible",
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </p>
-                          <div className="toolbar">
-                            {canDownloadDocument ? (
-                              <button
-                                className="button secondary"
-                                disabled={activeDownloadId === document.id}
-                                onClick={() => handleDownload(document)}
-                                type="button"
-                              >
-                                {activeDownloadId === document.id
-                                  ? "Descargando..."
-                                  : "Descargar"}
-                              </button>
+                            {expandedVersionId === document.id ? (
+                              <VersionPanel
+                                activeDownloadId={activeVersionDownloadId}
+                                canDownload={canDownloadDocument}
+                                currentVersionId={currentVersion?.id ?? null}
+                                onDownload={handleDownloadVersion}
+                                versions={versions}
+                              />
                             ) : null}
-                            {canUpdateDocument ? (
-                              <button
-                                className="button secondary"
-                                onClick={() => startEdit(document)}
-                                type="button"
-                              >
-                                Editar
-                              </button>
+                            {uploadDocumentId === document.id ? (
+                              <UploadPanel
+                                currentVersion={currentVersion}
+                                error={uploadError}
+                                file={selectedUploadFile}
+                                isUploading={activeUploadId === document.id}
+                                onCancel={() => {
+                                  setUploadDocumentId(null);
+                                  setSelectedUploadFile(null);
+                                  setUploadError(null);
+                                }}
+                                onFileChange={handleUploadFileChange}
+                                onSubmit={(event) =>
+                                  handleUploadSubmit(event, document)
+                                }
+                              />
                             ) : null}
-                            {canDeleteDocument && document.status !== "DELETED" ? (
-                              <button
-                                className="button secondary"
-                                disabled={activeDeleteId === document.id}
-                                onClick={() => handleDelete(document)}
-                                type="button"
-                              >
-                                {activeDeleteId === document.id
-                                  ? "Eliminando..."
-                                  : "Eliminar"}
-                              </button>
-                            ) : null}
-                          </div>
-                        </>
-                      )}
-                    </article>
-                  ))}
+                          </>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </section>
@@ -757,12 +856,319 @@ export default function ProjectDocumentsPage() {
   );
 }
 
-function formatDocumentType(type: DocumentType) {
-  return documentTypes.find((item) => item.value === type)?.label ?? type;
+function DocumentMetadataForm({
+  categories,
+  error,
+  isSaving,
+  onCancel,
+  onChange,
+  onSubmit,
+  state,
+  submitLabel,
+}: {
+  categories: DocumentCategory[];
+  error: string | null;
+  isSaving: boolean;
+  onCancel?: () => void;
+  onChange: (state: DocumentFormState) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  state: DocumentFormState;
+  submitLabel: string;
+}) {
+  return (
+    <form className="form documents-form" onSubmit={onSubmit}>
+      <div className="documents-form-grid">
+        <div className="field">
+          <label htmlFor="document-title">Titulo</label>
+          <input
+            id="document-title"
+            maxLength={250}
+            value={state.title}
+            onChange={(event) => onChange({ ...state, title: event.target.value })}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="document-code">Codigo</label>
+          <input
+            id="document-code"
+            maxLength={80}
+            value={state.code}
+            onChange={(event) => onChange({ ...state, code: event.target.value })}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="document-category">Categoria</label>
+          <select
+            id="document-category"
+            value={state.categoryId}
+            onChange={(event) =>
+              onChange({ ...state, categoryId: event.target.value })
+            }
+          >
+            <option value="">Sin categoria</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="document-status">Estado</label>
+          <select
+            id="document-status"
+            value={state.status}
+            onChange={(event) =>
+              onChange({
+                ...state,
+                status: event.target.value as DocumentStatus,
+              })
+            }
+          >
+            {documentStatuses.map((status) => (
+              <option key={status.value} value={status.value}>
+                {status.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="document-visibility">Visibilidad</label>
+          <select
+            id="document-visibility"
+            value={state.visibility}
+            onChange={(event) =>
+              onChange({
+                ...state,
+                visibility: event.target.value as DocumentVisibility,
+              })
+            }
+          >
+            {documentVisibilities.map((visibility) => (
+              <option key={visibility.value} value={visibility.value}>
+                {visibility.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field documents-description-field">
+          <label htmlFor="document-description">Descripcion</label>
+          <textarea
+            id="document-description"
+            rows={3}
+            value={state.description}
+            onChange={(event) =>
+              onChange({ ...state, description: event.target.value })
+            }
+          />
+        </div>
+      </div>
+      {error ? <p className="form-error">{error}</p> : null}
+      <div className="toolbar">
+        <button className="button" disabled={isSaving} type="submit">
+          {isSaving ? "Guardando..." : submitLabel}
+        </button>
+        {onCancel ? (
+          <button className="button secondary" onClick={onCancel} type="button">
+            Cancelar
+          </button>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+function UploadPanel({
+  currentVersion,
+  error,
+  file,
+  isUploading,
+  onCancel,
+  onFileChange,
+  onSubmit,
+}: {
+  currentVersion: DocumentVersion | null;
+  error: string | null;
+  file: File | null;
+  isUploading: boolean;
+  onCancel: () => void;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="documents-upload-panel">
+      <form className="form documents-upload-form" onSubmit={onSubmit}>
+        <div>
+          <h3>Cargar archivo</h3>
+          <p className="muted">
+            {currentVersion
+              ? `Se creara una nueva version posterior a V${currentVersion.versionNumber}.`
+              : "Se creara la primera version del documento."}
+          </p>
+        </div>
+        <div className="field">
+          <label htmlFor="document-upload-file">Archivo PDF, JPG o PNG</label>
+          <input
+            accept={allowedUploadMimeTypes.join(",")}
+            disabled={isUploading}
+            id="document-upload-file"
+            onChange={onFileChange}
+            type="file"
+          />
+        </div>
+        {file ? (
+          <p className="muted">
+            {[file.name, file.type, formatFileSize(file.size)].filter(Boolean).join(" | ")}
+          </p>
+        ) : null}
+        {error ? <p className="form-error">{error}</p> : null}
+        <div className="toolbar">
+          <button className="button" disabled={isUploading} type="submit">
+            {isUploading ? "Cargando..." : "Guardar archivo"}
+          </button>
+          <button
+            className="button secondary"
+            disabled={isUploading}
+            onClick={onCancel}
+            type="button"
+          >
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function VersionPanel({
+  activeDownloadId,
+  canDownload,
+  currentVersionId,
+  onDownload,
+  versions,
+}: {
+  activeDownloadId: string | null;
+  canDownload: boolean;
+  currentVersionId: string | null;
+  onDownload: (version: DocumentVersion) => void;
+  versions: DocumentVersion[];
+}) {
+  if (versions.length === 0) {
+    return (
+      <div className="documents-version-panel">
+        <p className="muted">Este documento aun no tiene versiones con archivo.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="documents-version-panel">
+      {versions.map((version) => (
+        <div className="documents-version-row" key={version.id}>
+          <div>
+            <strong>V{version.versionNumber}</strong>
+            <p className="muted">
+              {[
+                version.originalFileName ?? version.fileName,
+                version.mimeType,
+                formatFileSize(version.sizeBytes),
+                version.checksumSha256
+                  ? `SHA256 ${version.checksumSha256.slice(0, 16)}...`
+                  : null,
+                formatDateTime(version.createdAt),
+              ]
+                .filter(Boolean)
+                .join(" | ")}
+            </p>
+          </div>
+          <div className="documents-version-actions">
+            {version.id === currentVersionId || version.isCurrentVersion ? (
+              <span className="badge">Actual</span>
+            ) : null}
+            {canDownload ? (
+              <button
+                className="button secondary"
+                disabled={activeDownloadId === version.id}
+                onClick={() => onDownload(version)}
+                type="button"
+              >
+                {activeDownloadId === version.id ? "Descargando..." : "Descargar"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function validateUploadFile(file: File) {
+  if (!allowedUploadMimeTypes.includes(file.type)) {
+    return "Tipo de archivo no permitido. Usa PDF, JPG o PNG.";
+  }
+
+  if (file.size > maxUploadSizeBytes) {
+    return "El archivo supera el limite permitido de 10 MB.";
+  }
+
+  if (file.size <= 0) {
+    return "El archivo esta vacio.";
+  }
+
+  return null;
+}
+
+function getCurrentVersion(versions: DocumentVersion[]) {
+  const current = versions.find((version) => version.isCurrentVersion);
+
+  if (current) {
+    return current;
+  }
+
+  return versions.reduce<DocumentVersion | null>((latest, version) => {
+    if (!latest || version.versionNumber > latest.versionNumber) {
+      return version;
+    }
+
+    return latest;
+  }, null);
+}
+
+function getDocumentTypeForCategory(
+  categoryId: string,
+  categories: DocumentCategory[],
+): DocumentType {
+  const code = categories.find((category) => category.id === categoryId)?.code;
+
+  switch (code) {
+    case "PLANOS":
+      return "PLANO";
+    case "SOLICITUDES_SUSPENSION":
+      return "SOLICITUD_SUSPENSION";
+    case "DENUNCIAS":
+      return "DENUNCIA";
+    case "DEMANDAS":
+      return "DEMANDA";
+    case "ACTAS":
+      return "ACTA";
+    case "EVIDENCIAS_FOTOGRAFICAS":
+      return "SOPORTE_FOTOGRAFICO";
+    case "CONTRATOS":
+      return "CONTRATO";
+    default:
+      return "OTRO";
+  }
 }
 
 function formatDocumentStatus(status: DocumentStatus) {
   return documentStatuses.find((item) => item.value === status)?.label ?? status;
+}
+
+function formatDocumentVisibility(visibility: DocumentVisibility) {
+  return (
+    documentVisibilities.find((item) => item.value === visibility)?.label ??
+    visibility
+  );
 }
 
 function formatFileSize(value: number | null) {

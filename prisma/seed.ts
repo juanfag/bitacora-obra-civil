@@ -426,6 +426,20 @@ const documentTypes = [
   "OTHER",
 ];
 
+const documentCategories = [
+  { code: "PLANOS", name: "Planos" },
+  { code: "CONTRATOS", name: "Contratos" },
+  { code: "ACTAS", name: "Actas" },
+  { code: "SOLICITUDES_SUSPENSION", name: "Solicitudes de suspension" },
+  { code: "INFORMES_TECNICOS", name: "Informes tecnicos" },
+  { code: "LICENCIAS", name: "Licencias" },
+  { code: "DENUNCIAS", name: "Denuncias" },
+  { code: "DEMANDAS", name: "Demandas" },
+  { code: "EVIDENCIAS_FOTOGRAFICAS", name: "Evidencias fotograficas" },
+  { code: "PDF_OFICIAL", name: "PDF oficial" },
+  { code: "OTROS", name: "Otros" },
+];
+
 const toName = (code: string) =>
   code
     .split("_")
@@ -672,11 +686,60 @@ async function seedDemoData() {
   console.log("Demo data loaded.");
 }
 
+async function seedDocumentCategories() {
+  console.log("Loading document categories...");
+
+  const organizations = await prisma.organization.findMany({
+    select: {
+      id: true,
+    },
+  });
+
+  for (const organization of organizations) {
+    for (const category of documentCategories) {
+      const existingCategory = await prisma.documentCategory.findFirst({
+        where: {
+          organizationId: organization.id,
+          projectId: null,
+          code: category.code,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (existingCategory) {
+        await prisma.documentCategory.update({
+          where: {
+            id: existingCategory.id,
+          },
+          data: {
+            name: category.name,
+            status: "ACTIVE",
+          },
+        });
+        continue;
+      }
+
+      await prisma.documentCategory.create({
+        data: {
+          organizationId: organization.id,
+          code: category.code,
+          name: category.name,
+        },
+      });
+    }
+  }
+
+  console.log("Document categories loaded.");
+}
+
 async function main() {
   console.log("Starting seed...");
 
   await seedBaseCatalogs();
   await seedDemoData();
+  await seedDocumentCategories();
 
   console.log("Seed finished successfully.");
 }

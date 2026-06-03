@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { DocumentType } from "@prisma/client";
+import { DocumentStatus, DocumentType, DocumentVisibility } from "@prisma/client";
 import {
   IsEnum,
   IsInt,
@@ -28,6 +28,17 @@ export class CreateDocumentDto {
   @IsOptional()
   eventId?: string;
 
+  @ApiPropertyOptional({ example: "018f63f4-4937-7784-9ef5-5b51f6c02b4d" })
+  @IsUUID()
+  @IsOptional()
+  categoryId?: string;
+
+  @ApiPropertyOptional({ example: "DOC-2026-001" })
+  @IsString()
+  @MaxLength(80)
+  @IsOptional()
+  code?: string;
+
   @ApiProperty({ enum: DocumentType, example: DocumentType.PLANO })
   @IsEnum(DocumentType)
   type!: DocumentType;
@@ -43,29 +54,46 @@ export class CreateDocumentDto {
   @IsOptional()
   description?: string;
 
-  @ApiProperty({ example: "plano-estructural-n2.pdf" })
+  @ApiPropertyOptional({ example: "plano-estructural-n2.pdf" })
   @IsString()
   @MaxLength(250)
-  fileName!: string;
+  @IsOptional()
+  fileName?: string;
 
-  @ApiProperty({ example: "application/pdf" })
+  @ApiPropertyOptional({ example: "application/pdf" })
   @IsString()
   @MaxLength(120)
-  mimeType!: string;
+  @IsOptional()
+  mimeType?: string;
 
-  @ApiProperty({ example: 248192, minimum: 0 })
+  @ApiPropertyOptional({ example: 248192, minimum: 0 })
   @IsInt()
   @Min(0)
   @Max(Number.MAX_SAFE_INTEGER)
-  sizeBytes!: number;
+  @IsOptional()
+  sizeBytes?: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example:
       "f2ca1bb6c7e907d06dafe4687e579fce58f74f7761237a5f8e89e76a2ea37b5f",
   })
   @IsString()
   @Matches(/^[a-fA-F0-9]{64}$/)
-  checksumSha256!: string;
+  @IsOptional()
+  checksumSha256?: string;
+
+  @ApiPropertyOptional({ enum: DocumentStatus, example: DocumentStatus.ACTIVE })
+  @IsEnum(DocumentStatus)
+  @IsOptional()
+  status?: DocumentStatus;
+
+  @ApiPropertyOptional({
+    enum: DocumentVisibility,
+    example: DocumentVisibility.PROJECT,
+  })
+  @IsEnum(DocumentVisibility)
+  @IsOptional()
+  visibility?: DocumentVisibility;
 
   @ApiPropertyOptional({
     example: { externalReference: "DOC-2026-001", revision: "A" },

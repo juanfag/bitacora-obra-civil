@@ -107,11 +107,46 @@ enum DocumentType {
 }
 
 enum DocumentStatus {
+  DRAFT
   ACTIVE
+  IN_REVIEW
+  APPROVED
+  REJECTED
   ARCHIVED
+  SUPERSEDED
   DELETED
 
   @@map("document_status")
+}
+
+enum DocumentVisibility {
+  PRIVATE
+  PROJECT
+  ORGANIZATION
+  PUBLIC_VERIFICATION
+  RESTRICTED
+
+  @@map("document_visibility")
+}
+
+enum DocumentRelationType {
+  DAILY_LOG
+  DAILY_LOG_EVENT
+  PROJECT
+  PRIMARY
+  SUPPORT
+  EVIDENCE
+  GENERATED_PDF
+  SIGNED_PDF
+  CONTRACT
+  DESIGN_PLAN
+  PHOTO_SUPPORT
+  LEGAL_SUPPORT
+  REFERENCE
+  REPLACES
+  SUPERSEDES
+
+  @@map("document_relation_type")
 }
 
 enum DailyLogDocumentRole {
@@ -155,6 +190,11 @@ enum AuditAction {
   UPDATE_DOCUMENT
   DELETE_DOCUMENT
   DOWNLOAD_DOCUMENT
+  DOCUMENT_CREATED
+  DOCUMENT_VERSION_CREATED
+  DOCUMENT_DOWNLOADED
+  DOCUMENT_RELATION_CREATED
+  DOCUMENT_RELATION_DELETED
   USER_SIGNATURE_UPLOADED
   USER_SIGNATURE_REPLACED
   USER_SIGNATURE_DELETED
@@ -189,6 +229,8 @@ model Organization {
 
   projects  Project[]
   documents Document[]
+  documentCategories DocumentCategory[]
+  documentRelations  DocumentRelation[]
   createdBy User?     @relation("OrganizationCreatedBy", fields: [createdById], references: [id])
   updatedBy User?     @relation("OrganizationUpdatedBy", fields: [updatedById], references: [id])
   deletedBy User?     @relation("OrganizationDeletedBy", fields: [deletedById], references: [id])
@@ -241,6 +283,13 @@ model User {
   updatedOrganizations   Organization[]          @relation("OrganizationUpdatedBy")
   deletedOrganizations   Organization[]          @relation("OrganizationDeletedBy")
   uploadedDocuments      Document[]              @relation("DocumentUploadedBy")
+  createdDocuments       Document[]              @relation("DocumentCreatedBy")
+  updatedDocuments       Document[]              @relation("DocumentUpdatedBy")
+  deletedDocuments       Document[]              @relation("DocumentDeletedBy")
+  uploadedDocumentVersions DocumentVersion[]      @relation("DocumentVersionUploadedBy")
+  createdDocumentCategories DocumentCategory[]    @relation("DocumentCategoryCreatedBy")
+  updatedDocumentCategories DocumentCategory[]    @relation("DocumentCategoryUpdatedBy")
+  createdDocumentRelations  DocumentRelation[]    @relation("DocumentRelationCreatedBy")
   uploadedAttachments    Attachment[]            @relation("AttachmentUploadedBy")
   createdAttachments     Attachment[]            @relation("AttachmentCreatedBy")
   updatedAttachments     Attachment[]            @relation("AttachmentUpdatedBy")
@@ -317,6 +366,8 @@ model Project {
   dailyLogs    DailyLog[]
   events       Event[]
   documents    Document[]
+  documentCategories DocumentCategory[]
+  documentRelations  DocumentRelation[]
 
   @@unique([organizationId, code], map: "uq_projects_org_code")
   @@index([organizationId], map: "idx_projects_organization")
@@ -405,6 +456,7 @@ model DailyLog {
   statusHistory  DailyLogStatusHistory[]
   documents      DailyLogDocument[]
   documentRecords Document[]              @relation("DocumentDailyLog")
+  documentRelations DocumentRelation[]
   pdfVersions    DailyLogPdfVersion[]
   signatures     DailyLogSignature[]
 
@@ -447,6 +499,7 @@ model DailyLogEvent {
   eventType   EventType    @relation(fields: [eventTypeId], references: [id])
   reportedBy  User         @relation("DailyLogEventReportedBy", fields: [reportedById], references: [id])
   attachments Attachment[]
+  documentRelations DocumentRelation[]
 
   @@index([dailyLogId], map: "idx_daily_log_events_daily_log")
   @@index([eventTypeId], map: "idx_daily_log_events_event_type")
@@ -610,6 +663,38 @@ model DailyLogSignature {
   @@map("daily_log_signatures")
 }
 
+model DocumentCategory {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  projectId      String?      @map("project_id") @db.Uuid
+  parentId       String?      @map("parent_id") @db.Uuid
+  code           String       @db.VarChar(80)
+  name           String       @db.VarChar(150)
+  description    String?
+  status         RecordStatus @default(ACTIVE)
+  sortOrder      Int          @default(0) @map("sort_order")
+  createdById    String?      @map("created_by") @db.Uuid
+  updatedById    String?      @map("updated_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamp(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  project      Project?           @relation(fields: [projectId], references: [id])
+  parent       DocumentCategory?  @relation("DocumentCategoryTree", fields: [parentId], references: [id])
+  children     DocumentCategory[] @relation("DocumentCategoryTree")
+  createdBy    User?              @relation("DocumentCategoryCreatedBy", fields: [createdById], references: [id])
+  updatedBy    User?              @relation("DocumentCategoryUpdatedBy", fields: [updatedById], references: [id])
+  documents    Document[]
+
+  @@unique([organizationId, projectId, code], map: "uq_document_categories_scope_code")
+  @@index([organizationId], map: "idx_document_categories_organization")
+  @@index([projectId], map: "idx_document_categories_project")
+  @@index([parentId], map: "idx_document_categories_parent")
+  @@index([status], map: "idx_document_categories_status")
+  @@map("document_categories")
+}
+
 model Document {
   id              String                  @id @default(uuid()) @db.Uuid
   organizationId  String                  @map("organization_id") @db.Uuid
@@ -617,7 +702,13 @@ model Document {
   dailyLogId      String?                 @map("daily_log_id") @db.Uuid
   eventId         String?                 @map("event_id") @db.Uuid
   documentTypeId  String                  @map("document_type_id") @db.Uuid
+  categoryId      String?                 @map("category_id") @db.Uuid
+  currentVersionId String?                @unique(map: "uq_documents_current_version") @map("current_version_id") @db.Uuid
   uploadedById    String                  @map("uploaded_by") @db.Uuid
+  createdById     String?                 @map("created_by") @db.Uuid
+  updatedById     String?                 @map("updated_by") @db.Uuid
+  deletedById     String?                 @map("deleted_by") @db.Uuid
+  code            String?                 @db.VarChar(80)
   type            DocumentType            @default(OTRO)
   title           String                  @db.VarChar(250)
   description     String?
@@ -630,6 +721,7 @@ model Document {
   metadata        Json?                   @db.JsonB
   version         Int                     @default(1)
   status          DocumentStatus          @default(ACTIVE)
+  visibility      DocumentVisibility      @default(PROJECT)
   deletedAt       DateTime?               @map("deleted_at") @db.Timestamp(6)
   createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt       DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
@@ -639,19 +731,100 @@ model Document {
   dailyLog          DailyLog?            @relation("DocumentDailyLog", fields: [dailyLogId], references: [id])
   event             Event?               @relation("DocumentEvent", fields: [eventId], references: [id])
   documentType      DocumentTypeCatalog  @relation(fields: [documentTypeId], references: [id])
+  category          DocumentCategory?    @relation(fields: [categoryId], references: [id])
+  currentVersion    DocumentVersion?     @relation("CurrentDocumentVersion", fields: [currentVersionId], references: [id])
   uploadedBy        User                 @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
+  createdBy         User?                @relation("DocumentCreatedBy", fields: [createdById], references: [id])
+  updatedBy         User?                @relation("DocumentUpdatedBy", fields: [updatedById], references: [id])
+  deletedBy         User?                @relation("DocumentDeletedBy", fields: [deletedById], references: [id])
+  versions          DocumentVersion[]    @relation("DocumentVersions")
+  relations         DocumentRelation[]
+  relatedRelations  DocumentRelation[]   @relation("RelatedDocumentRelations")
   eventDocuments    EventDocument[]
   dailyLogDocuments DailyLogDocument[]
   pdfVersions       DailyLogPdfVersion[]
 
+  @@unique([projectId, code], map: "uq_documents_project_code")
   @@index([organizationId], map: "idx_documents_organization")
   @@index([projectId], map: "idx_documents_project")
   @@index([dailyLogId], map: "idx_documents_daily_log")
   @@index([eventId], map: "idx_documents_event")
+  @@index([categoryId], map: "idx_documents_category")
   @@index([type], map: "idx_documents_control_type")
   @@index([status], map: "idx_documents_status")
+  @@index([visibility], map: "idx_documents_visibility")
   @@index([documentTypeId], map: "idx_documents_type")
   @@map("documents")
+}
+
+model DocumentVersion {
+  id              String                  @id @default(uuid()) @db.Uuid
+  documentId      String                  @map("document_id") @db.Uuid
+  versionNumber   Int                     @map("version_number")
+  fileName        String                  @map("file_name") @db.VarChar(250)
+  originalName    String?                 @map("original_name") @db.VarChar(250)
+  originalFileName String?                @map("original_file_name") @db.VarChar(250)
+  mimeType        String?                 @map("mime_type") @db.VarChar(120)
+  extension       String?                 @db.VarChar(20)
+  sizeBytes       BigInt?                 @map("size_bytes")
+  checksumSha256  String?                 @map("checksum_sha256") @db.Char(64)
+  storageProvider DocumentStorageProvider @default(LOCAL) @map("storage_provider")
+  storageBucket   String?                 @map("storage_bucket") @db.VarChar(200)
+  storageKey      String                  @map("storage_key")
+  storagePath     String?                 @map("storage_path")
+  storageUrl      String?                 @map("storage_url")
+  etag            String?                 @db.VarChar(250)
+  isCurrentVersion Boolean                @default(false) @map("is_current_version")
+  uploadedById    String                  @map("uploaded_by") @db.Uuid
+  changeReason    String?                 @map("change_reason")
+  metadata        Json?                   @db.JsonB
+  deletedAt       DateTime?               @map("deleted_at") @db.Timestamp(6)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  document            Document   @relation("DocumentVersions", fields: [documentId], references: [id])
+  currentForDocuments Document[] @relation("CurrentDocumentVersion")
+  uploadedBy          User       @relation("DocumentVersionUploadedBy", fields: [uploadedById], references: [id])
+
+  @@unique([documentId, versionNumber], map: "uq_document_versions_number")
+  @@index([documentId], map: "idx_document_versions_document")
+  @@index([checksumSha256], map: "idx_document_versions_checksum")
+  @@index([uploadedById], map: "idx_document_versions_uploaded_by")
+  @@map("document_versions")
+}
+
+model DocumentRelation {
+  id              String               @id @default(uuid()) @db.Uuid
+  documentId      String               @map("document_id") @db.Uuid
+  relationType    DocumentRelationType @map("relation_type")
+  organizationId  String?              @map("organization_id") @db.Uuid
+  projectId       String?              @map("project_id") @db.Uuid
+  dailyLogId      String?              @map("daily_log_id") @db.Uuid
+  dailyLogEventId String?              @map("daily_log_event_id") @db.Uuid
+  relatedDocumentId String?            @map("related_document_id") @db.Uuid
+  metadata        Json?                @db.JsonB
+  createdById     String?              @map("created_by") @db.Uuid
+  updatedById     String?              @map("updated_by") @db.Uuid
+  deletedAt       DateTime?            @map("deleted_at") @db.Timestamp(6)
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  document        Document       @relation(fields: [documentId], references: [id])
+  relatedDocument Document?      @relation("RelatedDocumentRelations", fields: [relatedDocumentId], references: [id])
+  organization    Organization?  @relation(fields: [organizationId], references: [id])
+  project         Project?       @relation(fields: [projectId], references: [id])
+  dailyLog        DailyLog?      @relation(fields: [dailyLogId], references: [id])
+  dailyLogEvent   DailyLogEvent? @relation(fields: [dailyLogEventId], references: [id])
+  createdBy       User?          @relation("DocumentRelationCreatedBy", fields: [createdById], references: [id])
+
+  @@index([documentId], map: "idx_document_relations_document")
+  @@index([relatedDocumentId], map: "idx_document_relations_related_document")
+  @@index([organizationId], map: "idx_document_relations_organization")
+  @@index([projectId], map: "idx_document_relations_project")
+  @@index([dailyLogId], map: "idx_document_relations_daily_log")
+  @@index([dailyLogEventId], map: "idx_document_relations_daily_log_event")
+  @@index([relationType], map: "idx_document_relations_type")
+  @@map("document_relations")
 }
 
 model EventDocument {

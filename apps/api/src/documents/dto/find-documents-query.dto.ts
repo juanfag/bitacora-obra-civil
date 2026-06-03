@@ -1,9 +1,23 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import { DocumentStatus, DocumentType } from "@prisma/client";
+import { DocumentStatus, DocumentType, DocumentVisibility } from "@prisma/client";
 import { Type } from "class-transformer";
-import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from "class-validator";
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from "class-validator";
 
 export class FindDocumentsQueryDto {
+  @ApiPropertyOptional({ example: "018f63f4-4937-7784-9ef5-5b51f6c02b4d" })
+  @IsUUID()
+  @IsOptional()
+  organizationId?: string;
+
   @ApiPropertyOptional({ example: "018f63f4-4937-7784-9ef5-5b51f6c02b4a" })
   @IsUUID()
   @IsOptional()
@@ -19,6 +33,11 @@ export class FindDocumentsQueryDto {
   @IsOptional()
   eventId?: string;
 
+  @ApiPropertyOptional({ example: "018f63f4-4937-7784-9ef5-5b51f6c02b4d" })
+  @IsUUID()
+  @IsOptional()
+  categoryId?: string;
+
   @ApiPropertyOptional({ enum: DocumentType, example: DocumentType.ACTA })
   @IsEnum(DocumentType)
   @IsOptional()
@@ -28,6 +47,20 @@ export class FindDocumentsQueryDto {
   @IsEnum(DocumentStatus)
   @IsOptional()
   status?: DocumentStatus;
+
+  @ApiPropertyOptional({
+    enum: DocumentVisibility,
+    example: DocumentVisibility.PROJECT,
+  })
+  @IsEnum(DocumentVisibility)
+  @IsOptional()
+  visibility?: DocumentVisibility;
+
+  @ApiPropertyOptional({ example: "plano estructural" })
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  search?: string;
 
   @ApiPropertyOptional({ example: 1, minimum: 1, default: 1 })
   @Type(() => Number)

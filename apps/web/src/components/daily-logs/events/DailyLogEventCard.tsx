@@ -25,6 +25,7 @@ export function DailyLogEventCard({
   const eventUser = getEventUser(event);
   const attachmentCount = getAttachmentCount(event);
   const hasAttachments = Boolean(attachmentCount && attachmentCount > 0);
+  const relatedDocuments = event.relatedDocuments ?? [];
 
   return (
     <article className="daily-log-event-card">
@@ -69,6 +70,29 @@ export function DailyLogEventCard({
 
       <footer className="daily-log-event-footer">
         <EventAttachmentList attachments={event.attachments} />
+
+        {relatedDocuments.length > 0 ? (
+          <div className="event-related-documents">
+            <strong>Documentos relacionados</strong>
+            <ul>
+              {relatedDocuments.map((item) => (
+                <li key={item.relation.id}>
+                  <span>{item.document.title}</span>
+                  <small>
+                    {[
+                      item.document.code,
+                      item.document.currentVersion
+                        ? `V${item.document.currentVersion.versionNumber}`
+                        : "Sin archivo",
+                    ]
+                      .filter(Boolean)
+                      .join(" | ")}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         {canUploadAttachments &&
         canUploadEventAttachment(dailyLogStatus) &&

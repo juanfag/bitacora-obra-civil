@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent } from "react";
+import type { FormEvent, PointerEvent } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { CreateDailyLogEventForm } from "@/components/daily-logs/events/CreateDailyLogEventForm";
 import { DailyLogEventList } from "@/components/daily-logs/events/DailyLogEventList";
@@ -15,16 +15,25 @@ import { StatusBadge } from "@/components/workflow/StatusBadge";
 import { WorkflowAction } from "@/components/workflow/WorkflowActions";
 import {
   ApiClientError,
+  ControlledDocument,
   DailyLogAuditResponse,
   DailyLogSignature,
   DailyLogSignatureType,
+  RelatedDocument,
   UserSignature,
   applyDailyLogSignature,
   apiRequest,
+  createDocumentRelation,
+  deleteDocumentRelation,
   downloadDailyLogPdf,
+  downloadDocument,
+  downloadDocumentVersion,
   getDailyLogAudit,
+  getDailyLogDocuments,
+  getDailyLogEventDocuments,
   getDailyLogEventAttachments,
   getDailyLogSignatures,
+  getDocuments,
   getEventTypes,
   getMySignature,
   uploadDailyLogEventAttachment,
@@ -71,6 +80,19 @@ export default function DailyLogDetailPage() {
   const [audit, setAudit] = useState<DailyLogAuditResponse | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+  const [relatedDocuments, setRelatedDocuments] = useState<RelatedDocument[]>([]);
+  const [availableDocuments, setAvailableDocuments] = useState<
+    ControlledDocument[]
+  >([]);
+  const [relatedDocumentsError, setRelatedDocumentsError] = useState<
+    string | null
+  >(null);
+  const [isLoadingRelatedDocuments, setIsLoadingRelatedDocuments] =
+    useState(false);
+  const [selectedRelatedDocumentId, setSelectedRelatedDocumentId] = useState("");
+  const [documentRelationActionId, setDocumentRelationActionId] = useState<
+    string | null
+  >(null);
   const [signingType, setSigningType] = useState<DailyLogSignatureType | null>(
     null,
   );
@@ -79,6 +101,8 @@ export default function DailyLogDetailPage() {
   const canUploadAttachments = permissions.can("attachments:create");
   const canApplySignature = permissions.can("daily-logs:update");
   const canDownloadPdf = permissions.can("daily-logs:read");
+  const canReadDocuments = permissions.can("documents:read");
+  const canRelateDocuments = permissions.can("documents:update");
   const allowedWorkflowActions = getAllowedWorkflowActions(permissions.can);
 
   const handleUnauthorized = useCallback(() => {
@@ -93,9 +117,12 @@ export default function DailyLogDetailPage() {
     setDocumentEvidenceError(null);
     setSignaturesError(null);
     setAuditError(null);
+    setRelatedDocumentsError(null);
     setDocumentEvidence(null);
     setDailyLogSignatures([]);
     setAudit(null);
+    setRelatedDocuments([]);
+    setAvailableDocuments([]);
     setNotFound(false);
 
     try {
@@ -116,6 +143,37 @@ export default function DailyLogDetailPage() {
       setIsLoadingDocumentEvidence(true);
       setIsLoadingSignatures(true);
       setIsLoadingAudit(true);
+      setIsLoadingRelatedDocuments(canReadDocuments);
+
+      if (canReadDocuments) {
+        try {
+          const [relatedResponse, availableResponse] = await Promise.all([
+            getDailyLogDocuments(params.id),
+            getDocuments({
+              projectId: response.projectId,
+              status: "ACTIVE",
+              limit: 100,
+            }),
+          ]);
+
+          setRelatedDocuments(relatedResponse);
+          setAvailableDocuments(availableResponse.items);
+        } catch (caughtError) {
+          setRelatedDocuments([]);
+          setAvailableDocuments([]);
+
+          if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+            handleUnauthorized();
+            return;
+          }
+
+          setRelatedDocumentsError(
+            "No fue posible cargar los documentos relacionados.",
+          );
+        } finally {
+          setIsLoadingRelatedDocuments(false);
+        }
+      }
 
       try {
         const [signaturesResponse, userSignatureResponse] = await Promise.all([
@@ -211,7 +269,7 @@ export default function DailyLogDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [handleUnauthorized, params.id]);
+  }, [canReadDocuments, handleUnauthorized, params.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -330,6 +388,116 @@ export default function DailyLogDetailPage() {
 
       setError("No fue posible cargar el adjunto.");
       return false;
+    }
+  }
+
+  async function associateDailyLogDocument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedRelatedDocumentId) {
+      setRelatedDocumentsError("Selecciona un documento para asociar.");
+      return;
+    }
+
+    setDocumentRelationActionId(selectedRelatedDocumentId);
+    setRelatedDocumentsError(null);
+    setSuccessMessage(null);
+
+    try {
+      await createDocumentRelation(selectedRelatedDocumentId, {
+        relationType: "DAILY_LOG",
+        dailyLogId: params.id,
+        metadata: {
+          source: "daily_log_detail",
+        },
+      });
+      setSelectedRelatedDocumentId("");
+      await loadDailyLog();
+      setSuccessMessage("Documento asociado correctamente.");
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+
+      setRelatedDocumentsError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible asociar el documento.",
+      );
+    } finally {
+      setDocumentRelationActionId(null);
+    }
+  }
+
+  async function removeDailyLogDocumentRelation(item: RelatedDocument) {
+    const confirmed = window.confirm(
+      `Seguro que deseas quitar la relacion con "${item.document.title}"?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDocumentRelationActionId(item.relation.id);
+    setRelatedDocumentsError(null);
+    setSuccessMessage(null);
+
+    try {
+      await deleteDocumentRelation(item.document.id, item.relation.id);
+      await loadDailyLog();
+      setSuccessMessage("Relacion documental eliminada correctamente.");
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+
+      setRelatedDocumentsError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible quitar la relacion documental.",
+      );
+    } finally {
+      setDocumentRelationActionId(null);
+    }
+  }
+
+  async function downloadRelatedDocument(item: RelatedDocument) {
+    setDocumentRelationActionId(item.relation.id);
+    setRelatedDocumentsError(null);
+
+    try {
+      const response = item.document.currentVersion
+        ? await downloadDocumentVersion(item.document.currentVersion.id)
+        : await downloadDocument(item.document.id);
+      const href = URL.createObjectURL(response.blob);
+      const link = document.createElement("a");
+
+      link.href = href;
+      link.download =
+        response.fileName ??
+        item.document.currentVersion?.originalFileName ??
+        item.document.currentVersion?.fileName ??
+        item.document.fileName ??
+        "documento";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    } catch (caughtError) {
+      if (caughtError instanceof ApiClientError && caughtError.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+
+      setRelatedDocumentsError(
+        caughtError instanceof ApiClientError
+          ? caughtError.message
+          : "No fue posible descargar el documento relacionado.",
+      );
+    } finally {
+      setDocumentRelationActionId(null);
     }
   }
 
@@ -505,6 +673,26 @@ export default function DailyLogDetailPage() {
                 events={dailyLogEvents}
                 eventTypes={eventTypes}
                 onAttachmentUpload={uploadAttachment}
+              />
+            </InfoCard>
+
+            <InfoCard
+              className="daily-log-section-card daily-log-section-medium"
+              title="Documentos relacionados"
+            >
+              <RelatedDocumentsSection
+                actionId={documentRelationActionId}
+                availableDocuments={availableDocuments}
+                canDownload={canReadDocuments}
+                canRelate={canRelateDocuments}
+                error={relatedDocumentsError}
+                isLoading={isLoadingRelatedDocuments}
+                onAssociate={associateDailyLogDocument}
+                onDownload={downloadRelatedDocument}
+                onRemove={removeDailyLogDocumentRelation}
+                relatedDocuments={relatedDocuments}
+                selectedDocumentId={selectedRelatedDocumentId}
+                setSelectedDocumentId={setSelectedRelatedDocumentId}
               />
             </InfoCard>
 
@@ -747,6 +935,148 @@ function PreliminaryDigitalSignaturesSection({
           signer={signer}
         />
       ))}
+    </div>
+  );
+}
+
+function RelatedDocumentsSection({
+  actionId,
+  availableDocuments,
+  canDownload,
+  canRelate,
+  error,
+  isLoading,
+  onAssociate,
+  onDownload,
+  onRemove,
+  relatedDocuments,
+  selectedDocumentId,
+  setSelectedDocumentId,
+}: {
+  actionId: string | null;
+  availableDocuments: ControlledDocument[];
+  canDownload: boolean;
+  canRelate: boolean;
+  error: string | null;
+  isLoading: boolean;
+  onAssociate: (event: FormEvent<HTMLFormElement>) => void;
+  onDownload: (item: RelatedDocument) => void;
+  onRemove: (item: RelatedDocument) => void;
+  relatedDocuments: RelatedDocument[];
+  selectedDocumentId: string;
+  setSelectedDocumentId: (documentId: string) => void;
+}) {
+  const relatedDocumentIds = new Set(
+    relatedDocuments.map((item) => item.document.id),
+  );
+  const selectableDocuments = availableDocuments.filter(
+    (document) => !relatedDocumentIds.has(document.id),
+  );
+
+  if (isLoading) {
+    return <p className="muted">Cargando documentos relacionados...</p>;
+  }
+
+  return (
+    <div className="related-documents-section">
+      {canRelate ? (
+        <form className="related-documents-form" onSubmit={onAssociate}>
+          <label>
+            Asociar documento existente
+            <select
+              value={selectedDocumentId}
+              onChange={(event) => setSelectedDocumentId(event.target.value)}
+            >
+              <option value="">Selecciona un documento</option>
+              {selectableDocuments.map((document) => (
+                <option key={document.id} value={document.id}>
+                  {[
+                    document.code,
+                    document.title,
+                    document.category?.name ?? "Sin categoria",
+                  ]
+                    .filter(Boolean)
+                    .join(" - ")}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="button"
+            disabled={!selectedDocumentId || actionId === selectedDocumentId}
+            type="submit"
+          >
+            {actionId === selectedDocumentId ? "Asociando..." : "Asociar"}
+          </button>
+        </form>
+      ) : null}
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {relatedDocuments.length === 0 ? (
+        <div className="document-evidence-state">
+          <p className="muted">Sin documentos relacionados.</p>
+        </div>
+      ) : (
+        <div className="related-documents-list">
+          {relatedDocuments.map((item) => (
+            <article className="related-document-card" key={item.relation.id}>
+              <div>
+                <div className="status-row">
+                  <span className="badge">
+                    {item.document.currentVersion
+                      ? `V${item.document.currentVersion.versionNumber}`
+                      : "Sin archivo"}
+                  </span>
+                  <span className="badge">
+                    {formatDocumentStatus(item.document.status)}
+                  </span>
+                </div>
+                <h3>{item.document.title}</h3>
+                <p className="muted">
+                  {[
+                    item.document.code ?? "Sin codigo",
+                    item.document.category?.name ?? "Sin categoria",
+                    item.document.currentVersion?.originalFileName ??
+                      item.document.fileName,
+                    item.document.currentVersion?.mimeType ??
+                      item.document.mimeType,
+                    formatFileSize(
+                      item.document.currentVersion?.sizeBytes ??
+                        item.document.sizeBytes,
+                    ),
+                    formatDateTime(item.document.updatedAt),
+                  ]
+                    .filter(Boolean)
+                    .join(" | ")}
+                </p>
+              </div>
+              <div className="toolbar">
+                {canDownload ? (
+                  <button
+                    className="button secondary"
+                    disabled={actionId === item.relation.id}
+                    onClick={() => onDownload(item)}
+                    type="button"
+                  >
+                    {actionId === item.relation.id ? "Procesando..." : "Descargar"}
+                  </button>
+                ) : null}
+                {canRelate ? (
+                  <button
+                    className="button secondary"
+                    disabled={actionId === item.relation.id}
+                    onClick={() => onRemove(item)}
+                    type="button"
+                  >
+                    Quitar relacion
+                  </button>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1263,14 +1593,19 @@ async function getEventsWithAttachments(events: DailyLogEvent[]) {
         return {
           ...event,
           attachments: event.attachments ?? [],
+          relatedDocuments: event.relatedDocuments ?? [],
         };
       }
 
       try {
-        const attachments = await getDailyLogEventAttachments(event.id);
+        const [attachments, relatedDocuments] = await Promise.all([
+          getDailyLogEventAttachments(event.id),
+          getDailyLogEventDocuments(event.id),
+        ]);
         return {
           ...event,
           attachments,
+          relatedDocuments,
         };
       } catch (caughtError) {
         if (caughtError instanceof ApiClientError && caughtError.status === 401) {
@@ -1280,6 +1615,7 @@ async function getEventsWithAttachments(events: DailyLogEvent[]) {
         return {
           ...event,
           attachments: event.attachments ?? [],
+          relatedDocuments: event.relatedDocuments ?? [],
         };
       }
     }),
@@ -1685,4 +2021,35 @@ function formatDateTime(value: string) {
     month: "short",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function formatDocumentStatus(status: string) {
+  const labels: Record<string, string> = {
+    DRAFT: "Borrador",
+    ACTIVE: "Activo",
+    IN_REVIEW: "En revision",
+    APPROVED: "Aprobado",
+    REJECTED: "Rechazado",
+    ARCHIVED: "Archivado",
+    SUPERSEDED: "Reemplazado",
+    DELETED: "Eliminado",
+  };
+
+  return labels[status] ?? status;
+}
+
+function formatFileSize(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return null;
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

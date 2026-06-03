@@ -40,6 +40,7 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { DocumentsService } from "./documents.service";
 import { CreateDocumentDto } from "./dto/create-document.dto";
+import { CreateDocumentRelationDto } from "./dto/create-document-relation.dto";
 import { FindDocumentsQueryDto } from "./dto/find-documents-query.dto";
 import { UpdateDocumentDto } from "./dto/update-document.dto";
 import { UploadDocumentDto } from "./dto/upload-document.dto";
@@ -160,6 +161,62 @@ export class DocumentsController {
     @Query() query: FindDocumentsQueryDto,
   ) {
     return this.documentsService.findAll(query, user.sub);
+  }
+
+  @Get("categories")
+  @ApiOperation({ summary: "List document categories available to the current user" })
+  @ApiOkResponse({ description: "Document categories returned." })
+  @Permissions("documents:read")
+  findCategories(@CurrentUser() user: CurrentUserPayload) {
+    return this.documentsService.findCategories(user.sub);
+  }
+
+  @Get(":id/versions")
+  @ApiOperation({ summary: "List versions for a controlled document" })
+  @ApiParam({ name: "id", description: "Document UUID" })
+  @ApiOkResponse({ description: "Document versions returned." })
+  @ApiNotFoundResponse({ description: "Document not found." })
+  @Permissions("documents:read")
+  findVersions(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.documentsService.findVersions(id, user.sub);
+  }
+
+  @Post(":id/relations")
+  @ApiOperation({ summary: "Create a relation between a document and a target entity" })
+  @ApiCreatedResponse({ description: "Document relation created." })
+  @ApiBadRequestResponse({
+    description: "Invalid relation target, unsupported relation type, or duplicate relation.",
+  })
+  @ApiNotFoundResponse({ description: "Document or relation target not found." })
+  @Permissions("documents:update")
+  createRelation(
+    @Param("id") id: string,
+    @Body() createRelationDto: CreateDocumentRelationDto,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.documentsService.createRelation(id, createRelationDto, audit);
+  }
+
+  @Get(":id/relations")
+  @ApiOperation({ summary: "List relations for a document" })
+  @ApiOkResponse({ description: "Document relations returned." })
+  @ApiNotFoundResponse({ description: "Document not found." })
+  @Permissions("documents:read")
+  findRelations(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.documentsService.findRelations(id, user.sub);
+  }
+
+  @Delete(":id/relations/:relationId")
+  @ApiOperation({ summary: "Remove a document relation" })
+  @ApiOkResponse({ description: "Document relation removed." })
+  @ApiNotFoundResponse({ description: "Document relation not found." })
+  @Permissions("documents:update")
+  deleteRelation(
+    @Param("id") id: string,
+    @Param("relationId") relationId: string,
+    @AuditContext() audit: AuditRequestContext,
+  ) {
+    return this.documentsService.deleteRelation(id, relationId, audit);
   }
 
   @Get(":id/download")

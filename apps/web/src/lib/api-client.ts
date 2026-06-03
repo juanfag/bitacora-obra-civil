@@ -268,7 +268,34 @@ export type DocumentType =
   | "CONTRATO"
   | "OTRO";
 
-export type DocumentStatus = "ACTIVE" | "ARCHIVED" | "DELETED";
+export type DocumentStatus =
+  | "DRAFT"
+  | "ACTIVE"
+  | "IN_REVIEW"
+  | "APPROVED"
+  | "REJECTED"
+  | "ARCHIVED"
+  | "SUPERSEDED"
+  | "DELETED";
+
+export type DocumentVisibility =
+  | "PRIVATE"
+  | "PROJECT"
+  | "ORGANIZATION"
+  | "PUBLIC_VERIFICATION"
+  | "RESTRICTED";
+
+export type DocumentCategory = {
+  id: string;
+  organizationId: string;
+  projectId: string | null;
+  parentId: string | null;
+  code: string;
+  name: string;
+  description: string | null;
+  status: string;
+  sortOrder: number;
+};
 
 export type ControlledDocument = {
   id: string;
@@ -276,6 +303,8 @@ export type ControlledDocument = {
   projectId: string;
   dailyLogId: string | null;
   eventId: string | null;
+  categoryId: string | null;
+  code: string | null;
   type: DocumentType;
   title: string;
   description: string | null;
@@ -283,12 +312,18 @@ export type ControlledDocument = {
   mimeType: string | null;
   sizeBytes: number | null;
   status: DocumentStatus;
+  visibility: DocumentVisibility;
   metadata: Record<string, unknown> | null;
   uploadedById: string;
   uploadedBy: {
     id: string;
     fullName: string;
     email: string;
+  } | null;
+  category: {
+    id: string;
+    code: string;
+    name: string;
   } | null;
   createdAt: string;
   updatedAt: string;
@@ -306,20 +341,86 @@ export type DocumentsResponse = {
 };
 
 export type DocumentFilters = {
+  organizationId?: string;
   projectId?: string;
   dailyLogId?: string;
   eventId?: string;
+  categoryId?: string;
   type?: DocumentType | "";
   status?: DocumentStatus | "";
+  visibility?: DocumentVisibility | "";
+  search?: string;
   page?: number;
   limit?: number;
+};
+
+export type CreateDocumentInput = {
+  projectId: string;
+  dailyLogId?: string;
+  eventId?: string;
+  categoryId?: string;
+  code?: string;
+  type: DocumentType;
+  title: string;
+  description?: string | null;
+  status?: DocumentStatus;
+  visibility?: DocumentVisibility;
+  metadata?: Record<string, unknown>;
 };
 
 export type UpdateDocumentInput = {
   title?: string;
   description?: string | null;
+  categoryId?: string | null;
+  code?: string | null;
   type?: DocumentType;
   status?: DocumentStatus;
+  visibility?: DocumentVisibility;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type DocumentVersion = {
+  id: string;
+  documentId: string;
+  versionNumber: number;
+  fileName: string;
+  originalFileName: string | null;
+  mimeType: string | null;
+  extension: string | null;
+  sizeBytes: number | null;
+  checksumSha256: string | null;
+  storageProvider: string;
+  isCurrentVersion: boolean;
+  uploadedById: string;
+  changeReason: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+export type DocumentRelationType = "DAILY_LOG" | "DAILY_LOG_EVENT" | "PROJECT";
+
+export type DocumentRelation = {
+  id: string;
+  documentId: string;
+  relationType: DocumentRelationType;
+  organizationId: string | null;
+  projectId: string | null;
+  dailyLogId: string | null;
+  dailyLogEventId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+export type RelatedDocument = {
+  relation: DocumentRelation;
+  document: ControlledDocument & {
+    currentVersion: DocumentVersion | null;
+  };
 };
 
 export function getDashboardMetrics() {
@@ -385,6 +486,10 @@ export function getProject(projectId: string) {
 export function getDocuments(filters: DocumentFilters = {}) {
   const searchParams = new URLSearchParams();
 
+  if (filters.organizationId) {
+    searchParams.set("organizationId", filters.organizationId);
+  }
+
   if (filters.projectId) {
     searchParams.set("projectId", filters.projectId);
   }
@@ -397,12 +502,24 @@ export function getDocuments(filters: DocumentFilters = {}) {
     searchParams.set("eventId", filters.eventId);
   }
 
+  if (filters.categoryId) {
+    searchParams.set("categoryId", filters.categoryId);
+  }
+
   if (filters.type) {
     searchParams.set("type", filters.type);
   }
 
   if (filters.status) {
     searchParams.set("status", filters.status);
+  }
+
+  if (filters.visibility) {
+    searchParams.set("visibility", filters.visibility);
+  }
+
+  if (filters.search?.trim()) {
+    searchParams.set("search", filters.search.trim());
   }
 
   if (filters.page) {
@@ -418,6 +535,21 @@ export function getDocuments(filters: DocumentFilters = {}) {
   return apiRequest<DocumentsResponse>(
     `/documents${query ? `?${query}` : ""}`,
   );
+}
+
+export function getDocumentCategories() {
+  return apiRequest<DocumentCategory[]>("/documents/categories");
+}
+
+export function getDocument(id: string) {
+  return apiRequest<ControlledDocument>(`/documents/${encodeURIComponent(id)}`);
+}
+
+export function createDocument(payload: CreateDocumentInput) {
+  return apiRequest<ControlledDocument>("/documents", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function uploadDocument(body: FormData) {
@@ -440,19 +572,74 @@ export function deleteDocument(id: string) {
   });
 }
 
+export function getDocumentVersions(id: string) {
+  return apiRequest<DocumentVersion[]>(
+    `/documents/${encodeURIComponent(id)}/versions`,
+  );
+}
+
+export function createDocumentRelation(
+  documentId: string,
+  payload: {
+    relationType: DocumentRelationType;
+    dailyLogId?: string;
+    dailyLogEventId?: string;
+    projectId?: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  return apiRequest<DocumentRelation>(
+    `/documents/${encodeURIComponent(documentId)}/relations`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteDocumentRelation(documentId: string, relationId: string) {
+  return apiRequest<DocumentRelation>(
+    `/documents/${encodeURIComponent(documentId)}/relations/${encodeURIComponent(
+      relationId,
+    )}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export function getDailyLogDocuments(dailyLogId: string) {
+  return apiRequest<RelatedDocument[]>(
+    `/daily-logs/${encodeURIComponent(dailyLogId)}/documents`,
+  );
+}
+
+export function getDailyLogEventDocuments(eventId: string) {
+  return apiRequest<RelatedDocument[]>(
+    `/daily-log-events/${encodeURIComponent(eventId)}/documents`,
+  );
+}
+
 export async function downloadDocument(id: string) {
+  return downloadDocumentBlob(`/documents/${encodeURIComponent(id)}/download`);
+}
+
+export async function downloadDocumentVersion(id: string) {
+  return downloadDocumentBlob(
+    `/document-versions/${encodeURIComponent(id)}/download`,
+  );
+}
+
+async function downloadDocumentBlob(path: string) {
   const token =
     typeof window !== "undefined"
       ? window.localStorage.getItem("bitacora.accessToken")
       : null;
-  const response = await fetch(
-    `${apiBaseUrl}/documents/${encodeURIComponent(id)}/download`,
-    {
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-  );
+  });
 
   if (!response.ok) {
     const contentType = response.headers.get("content-type");

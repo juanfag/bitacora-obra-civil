@@ -21,6 +21,13 @@ export async function cleanupDailyLogGraph(
   const eventIds = events.map((event) => event.id);
 
   if (eventIds.length) {
+    await prisma.documentRelation.deleteMany({
+      where: {
+        dailyLogEventId: {
+          in: eventIds,
+        },
+      },
+    });
     await prisma.attachment.deleteMany({
       where: {
         dailyLogEventId: {
@@ -59,6 +66,13 @@ export async function cleanupDailyLogGraph(
       },
     },
   });
+  await prisma.documentRelation.deleteMany({
+    where: {
+      dailyLogId: {
+        in: dailyLogIds,
+      },
+    },
+  });
   await prisma.dailyLogDocument.deleteMany({
     where: {
       dailyLogId: {
@@ -90,6 +104,21 @@ export async function cleanupSmokeProjects(
     return;
   }
 
+  const dailyLogs = await prisma.dailyLog.findMany({
+    where: {
+      projectId: {
+        in: projectIds,
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+  await cleanupDailyLogGraph(
+    prisma,
+    dailyLogs.map((dailyLog) => dailyLog.id),
+  );
+
   const documents = await prisma.document.findMany({
     where: {
       projectId: {
@@ -103,6 +132,13 @@ export async function cleanupSmokeProjects(
   const documentIds = documents.map((document) => document.id);
 
   if (documentIds.length) {
+    await prisma.documentRelation.deleteMany({
+      where: {
+        documentId: {
+          in: documentIds,
+        },
+      },
+    });
     await prisma.eventDocument.deleteMany({
       where: {
         documentId: {
@@ -118,6 +154,23 @@ export async function cleanupSmokeProjects(
       },
     });
     await prisma.dailyLogPdfVersion.deleteMany({
+      where: {
+        documentId: {
+          in: documentIds,
+        },
+      },
+    });
+    await prisma.document.updateMany({
+      where: {
+        id: {
+          in: documentIds,
+        },
+      },
+      data: {
+        currentVersionId: null,
+      },
+    });
+    await prisma.documentVersion.deleteMany({
       where: {
         documentId: {
           in: documentIds,
