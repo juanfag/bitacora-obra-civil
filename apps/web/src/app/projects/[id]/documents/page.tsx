@@ -7,6 +7,7 @@ import { AuthGuard } from "@/components/auth-guard";
 import {
   ApiClientError,
   ControlledDocument,
+  DocumentAuditItem,
   DocumentCategory,
   DocumentStatus,
   DocumentType,
@@ -18,6 +19,7 @@ import {
   downloadDocument,
   downloadDocumentVersion,
   getDocument,
+  getDocumentAudit,
   getDocumentCategories,
   getDocumentVersions,
   getDocuments,
@@ -91,7 +93,11 @@ export default function ProjectDocumentsPage() {
   const [versionsByDocumentId, setVersionsByDocumentId] = useState<
     Record<string, DocumentVersion[]>
   >({});
+  const [auditByDocumentId, setAuditByDocumentId] = useState<
+    Record<string, DocumentAuditItem[]>
+  >({});
   const [expandedVersionId, setExpandedVersionId] = useState<string | null>(null);
+  const [expandedAuditId, setExpandedAuditId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<DocumentStatus | "">("ACTIVE");
   const [visibilityFilter, setVisibilityFilter] = useState<DocumentVisibility | "">(
@@ -110,6 +116,7 @@ export default function ProjectDocumentsPage() {
   const [activeVersionDownloadId, setActiveVersionDownloadId] = useState<
     string | null
   >(null);
+  const [activeAuditId, setActiveAuditId] = useState<string | null>(null);
   const [activeDeleteId, setActiveDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -177,6 +184,10 @@ export default function ProjectDocumentsPage() {
       );
 
       setVersionsByDocumentId(Object.fromEntries(versionEntries));
+
+      if (expandedAuditId) {
+        await refreshDocumentAudit(expandedAuditId);
+      }
     } catch (caughtError) {
       handleApiError(caughtError, {
         fallback: "No fue posible cargar la biblioteca documental.",
@@ -184,6 +195,26 @@ export default function ProjectDocumentsPage() {
       });
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function refreshDocumentAudit(documentId: string) {
+    setActiveAuditId(documentId);
+    setActionError(null);
+
+    try {
+      const audit = await getDocumentAudit(documentId);
+      setAuditByDocumentId((current) => ({
+        ...current,
+        [documentId]: audit.items,
+      }));
+    } catch (caughtError) {
+      handleApiError(caughtError, {
+        fallback: "No fue posible cargar la auditoria documental.",
+        setMessage: setActionError,
+      });
+    } finally {
+      setActiveAuditId(null);
     }
   }
 
@@ -280,6 +311,9 @@ export default function ProjectDocumentsPage() {
       setEditState(null);
       setSuccess("Documento actualizado correctamente.");
       await loadLibrary();
+      if (expandedAuditId === editState.id) {
+        await refreshDocumentAudit(editState.id);
+      }
     } catch (caughtError) {
       handleApiError(caughtError, {
         fallback: "No fue posible actualizar el documento.",
@@ -306,6 +340,9 @@ export default function ProjectDocumentsPage() {
     try {
       await deleteDocument(document.id);
       setSuccess("Documento eliminado correctamente.");
+      if (expandedAuditId === document.id) {
+        await refreshDocumentAudit(document.id);
+      }
       await loadLibrary();
     } catch (caughtError) {
       handleApiError(caughtError, {
@@ -348,6 +385,9 @@ export default function ProjectDocumentsPage() {
       });
     } finally {
       setActiveDownloadId(null);
+      if (expandedAuditId === document.id) {
+        void refreshDocumentAudit(document.id);
+      }
     }
   }
 
@@ -377,6 +417,9 @@ export default function ProjectDocumentsPage() {
       });
     } finally {
       setActiveVersionDownloadId(null);
+      if (expandedAuditId === version.documentId) {
+        void refreshDocumentAudit(version.documentId);
+      }
     }
   }
 
@@ -460,6 +503,9 @@ export default function ProjectDocumentsPage() {
       setSuccess("Archivo cargado correctamente. La version actual fue actualizada.");
       await loadLibrary();
       setExpandedVersionId(document.id);
+      if (expandedAuditId === document.id) {
+        await refreshDocumentAudit(document.id);
+      }
     } catch (caughtError) {
       handleApiError(caughtError, {
         fallback: "No fue posible cargar el archivo.",
@@ -472,6 +518,18 @@ export default function ProjectDocumentsPage() {
 
   function toggleVersions(documentId: string) {
     setExpandedVersionId((current) => (current === documentId ? null : documentId));
+  }
+
+  function toggleAudit(documentId: string) {
+    setExpandedAuditId((current) => {
+      const next = current === documentId ? null : documentId;
+
+      if (next && !auditByDocumentId[next]) {
+        void refreshDocumentAudit(next);
+      }
+
+      return next;
+    });
   }
 
   function handleApiError(
@@ -766,6 +824,16 @@ export default function ProjectDocumentsPage() {
                                 >
                                   Ver versiones
                                 </button>
+                                <button
+                                  className="button secondary"
+                                  disabled={activeAuditId === document.id}
+                                  onClick={() => toggleAudit(document.id)}
+                                  type="button"
+                                >
+                                  {activeAuditId === document.id
+                                    ? "Cargando auditoria..."
+                                    : "Auditoria documental"}
+                                </button>
                                 {canCreateDocument ? (
                                   <button
                                     className="button secondary"
@@ -839,6 +907,13 @@ export default function ProjectDocumentsPage() {
                                 onSubmit={(event) =>
                                   handleUploadSubmit(event, document)
                                 }
+                              />
+                            ) : null}
+                            {expandedAuditId === document.id ? (
+                              <DocumentAuditPanel
+                                auditItems={auditByDocumentId[document.id] ?? []}
+                                isLoading={activeAuditId === document.id}
+                                onRefresh={() => refreshDocumentAudit(document.id)}
                               />
                             ) : null}
                           </>
@@ -1040,6 +1115,68 @@ function UploadPanel({
   );
 }
 
+function DocumentAuditPanel({
+  auditItems,
+  isLoading,
+  onRefresh,
+}: {
+  auditItems: DocumentAuditItem[];
+  isLoading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="documents-audit-panel">
+      <div className="documents-audit-header">
+        <div>
+          <h3>Auditoria documental</h3>
+          <p className="muted">Historial de acciones del documento.</p>
+        </div>
+        <button
+          className="button secondary"
+          disabled={isLoading}
+          onClick={onRefresh}
+          type="button"
+        >
+          {isLoading ? "Actualizando..." : "Refrescar"}
+        </button>
+      </div>
+
+      {isLoading && auditItems.length === 0 ? (
+        <p className="muted">Cargando auditoria documental...</p>
+      ) : null}
+
+      {!isLoading && auditItems.length === 0 ? (
+        <div className="empty-state">
+          <h3>Sin auditoria</h3>
+          <p className="muted">Aun no hay eventos auditables para este documento.</p>
+        </div>
+      ) : null}
+
+      {auditItems.length > 0 ? (
+        <div className="documents-audit-list">
+          {auditItems.map((item) => (
+            <article className="documents-audit-item" key={item.id}>
+              <div>
+                <span className="badge">{formatAuditAction(item.action)}</span>
+                <h4>{formatAuditDetail(item)}</h4>
+                <p className="muted">
+                  {[
+                    item.performedBy.name ?? item.performedBy.email ?? "Sistema",
+                    formatDateTime(item.createdAt),
+                    item.entityType,
+                  ]
+                    .filter(Boolean)
+                    .join(" | ")}
+                </p>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function VersionPanel({
   activeDownloadId,
   canDownload,
@@ -1116,6 +1253,54 @@ function validateUploadFile(file: File) {
   }
 
   return null;
+}
+
+function formatAuditAction(action: string) {
+  const labels: Record<string, string> = {
+    DOCUMENT_CREATED: "Documento creado",
+    DOCUMENT_UPDATED: "Documento actualizado",
+    DOCUMENT_DELETED: "Documento eliminado",
+    DOCUMENT_VERSION_CREATED: "Version creada",
+    DOCUMENT_DOWNLOADED: "Descarga",
+    DOCUMENT_RELATION_CREATED: "Relacion creada",
+    DOCUMENT_RELATION_DELETED: "Relacion eliminada",
+  };
+
+  return labels[action] ?? action;
+}
+
+function formatAuditDetail(item: DocumentAuditItem) {
+  const value = getAuditValue(item.newValue) ?? getAuditValue(item.metadata);
+
+  if (typeof value?.title === "string") {
+    return value.title;
+  }
+
+  if (typeof value?.fileName === "string") {
+    return value.fileName;
+  }
+
+  if (typeof value?.originalFileName === "string") {
+    return value.originalFileName;
+  }
+
+  if (typeof value?.versionNumber === "number") {
+    return `Version ${value.versionNumber}`;
+  }
+
+  if (typeof value?.relationType === "string") {
+    return value.relationType;
+  }
+
+  return "Evento documental registrado";
+}
+
+function getAuditValue(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
 }
 
 function getCurrentVersion(versions: DocumentVersion[]) {

@@ -423,6 +423,30 @@ export type RelatedDocument = {
   };
 };
 
+export type DocumentAuditItem = {
+  id: string;
+  action: string;
+  rawAction: string;
+  entityType: string;
+  entityId: string;
+  performedBy: {
+    id: string | null;
+    name: string | null;
+    email: string | null;
+  };
+  createdAt: string;
+  metadata: unknown;
+  oldValue: unknown;
+  newValue: unknown;
+};
+
+export type DocumentAuditResponse = {
+  documentId: string;
+  total: number;
+  order: string;
+  items: DocumentAuditItem[];
+};
+
 export function getDashboardMetrics() {
   return apiRequest<DashboardMetrics>("/dashboard/metrics");
 }
@@ -575,6 +599,12 @@ export function deleteDocument(id: string) {
 export function getDocumentVersions(id: string) {
   return apiRequest<DocumentVersion[]>(
     `/documents/${encodeURIComponent(id)}/versions`,
+  );
+}
+
+export function getDocumentAudit(id: string) {
+  return apiRequest<DocumentAuditResponse>(
+    `/documents/${encodeURIComponent(id)}/audit`,
   );
 }
 

@@ -206,6 +206,15 @@ export class DocumentsController {
     return this.documentsService.findRelations(id, user.sub);
   }
 
+  @Get(":id/audit")
+  @ApiOperation({ summary: "Get document audit timeline" })
+  @ApiOkResponse({ description: "Document audit timeline returned." })
+  @ApiNotFoundResponse({ description: "Document not found." })
+  @Permissions("documents:read")
+  getAudit(@CurrentUser() user: CurrentUserPayload, @Param("id") id: string) {
+    return this.documentsService.getAudit(id, user.sub);
+  }
+
   @Delete(":id/relations/:relationId")
   @ApiOperation({ summary: "Remove a document relation" })
   @ApiOkResponse({ description: "Document relation removed." })

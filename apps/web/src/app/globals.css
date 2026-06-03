@@ -1558,6 +1558,48 @@ textarea {
   margin: 0 0 4px;
 }
 
+.documents-audit-panel {
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.documents-audit-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.documents-audit-header h3 {
+  margin: 0 0 4px;
+}
+
+.documents-audit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.documents-audit-item {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.documents-audit-item h4 {
+  font-size: 14px;
+  margin: 8px 0 4px;
+}
+
+.documents-audit-item p {
+  margin: 0;
+}
+
 .documents-version-panel {
   background: #f8fafc;
   border-top: 1px solid #e2e8f0;
