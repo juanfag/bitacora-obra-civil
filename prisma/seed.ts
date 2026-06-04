@@ -1,5 +1,11 @@
 import "dotenv/config";
-import { PrismaClient } from "@prisma/client";
+import {
+  DailyLogStatus,
+  DocumentStatus,
+  DocumentType,
+  DocumentVisibility,
+  PrismaClient,
+} from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as bcrypt from "bcrypt";
 import {
@@ -446,6 +452,175 @@ const toName = (code: string) =>
     .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
     .join(" ");
 
+const uatPassword = "UatDemo123!";
+
+const uatUserDefinitions = [
+  {
+    email: "uat.superadmin@bitacora.local",
+    fullName: "UAT Super Admin",
+    roleCode: "SUPER_ADMIN",
+    documentNumber: "UAT-CC-0001",
+  },
+  {
+    email: "uat.projectmanager@bitacora.local",
+    fullName: "UAT Gerente de Proyecto",
+    roleCode: "PROJECT_MANAGER",
+    documentNumber: "UAT-CC-0002",
+  },
+  {
+    email: "uat.supervisor@bitacora.local",
+    fullName: "UAT Supervisor de Obra",
+    roleCode: "SUPERVISOR",
+    documentNumber: "UAT-CC-0003",
+  },
+  {
+    email: "uat.projectadmin@bitacora.local",
+    fullName: "UAT Administrador de Proyecto",
+    roleCode: "PROJECT_ADMIN",
+    documentNumber: "UAT-CC-0004",
+  },
+  {
+    email: "uat.auditor@bitacora.local",
+    fullName: "UAT Auditor Tecnico",
+    roleCode: "AUDITOR",
+    documentNumber: "UAT-CC-0005",
+  },
+  {
+    email: "uat.inspector@bitacora.local",
+    fullName: "UAT Inspector de Campo",
+    roleCode: "INSPECTOR",
+    documentNumber: "UAT-CC-0006",
+  },
+  {
+    email: "uat.viewer@bitacora.local",
+    fullName: "UAT Consulta Cliente",
+    roleCode: "VIEWER",
+    documentNumber: "UAT-CC-0007",
+  },
+];
+
+const uatProjects = [
+  {
+    code: "UAT-VIAL-001",
+    name: "Corredor vial demo UAT",
+    description:
+      "Rehabilitacion de via urbana con redes de drenaje, andenes y carpeta asfaltica.",
+    location: "Medellin, Antioquia",
+    startDate: "2026-06-01",
+    endDate: "2026-12-15",
+  },
+  {
+    code: "UAT-EDIF-002",
+    name: "Edificio institucional demo UAT",
+    description:
+      "Construccion de edificio de servicios con cimentacion, estructura y acabados.",
+    location: "Rionegro, Antioquia",
+    startDate: "2026-06-03",
+    endDate: "2027-02-28",
+  },
+];
+
+const uatDailyLogs = [
+  {
+    projectCode: "UAT-VIAL-001",
+    logDate: "2026-06-01",
+    status: DailyLogStatus.CLOSED,
+    comments:
+      "Cierre de jornada con excavacion de caja vial, conformacion de subrasante y control topografico.",
+  },
+  {
+    projectCode: "UAT-VIAL-001",
+    logDate: "2026-06-02",
+    status: DailyLogStatus.APPROVED,
+    comments:
+      "Jornada aprobada con instalacion de tuberia pluvial y relleno compactado por capas.",
+  },
+  {
+    projectCode: "UAT-VIAL-001",
+    logDate: "2026-06-03",
+    status: DailyLogStatus.IN_REVIEW,
+    comments:
+      "Bitacora enviada a revision por avance de concreto en cunetas y limpieza de frente.",
+  },
+  {
+    projectCode: "UAT-VIAL-001",
+    logDate: "2026-06-04",
+    status: DailyLogStatus.DRAFT,
+    comments:
+      "Borrador de jornada con actividades preliminares de senalizacion y replanteo.",
+  },
+  {
+    projectCode: "UAT-EDIF-002",
+    logDate: "2026-06-03",
+    status: DailyLogStatus.REJECTED,
+    comments:
+      "Bitacora rechazada por falta de soporte fotografico en actividad de acero de refuerzo.",
+  },
+  {
+    projectCode: "UAT-EDIF-002",
+    logDate: "2026-06-04",
+    status: DailyLogStatus.DRAFT,
+    comments:
+      "Borrador de seguimiento a formaleta, acero y liberacion parcial de cimentacion.",
+  },
+];
+
+const uatEventTemplates = [
+  {
+    eventTypeCode: "WORK_PROGRESS",
+    activity: "Avance de obra civil",
+    executionDescription:
+      "Se ejecutaron actividades programadas con cuadrilla completa, control de calidad en sitio y registro fotografico operativo.",
+  },
+  {
+    eventTypeCode: "MATERIAL_DELIVERY",
+    activity: "Recepcion de materiales",
+    executionDescription:
+      "Ingreso controlado de materiales con verificacion visual, remision del proveedor y almacenamiento temporal en zona autorizada.",
+  },
+  {
+    eventTypeCode: "INSPECTION",
+    activity: "Inspeccion tecnica",
+    executionDescription:
+      "Revision de niveles, alineamientos y condiciones de seguridad antes de continuar con la siguiente actividad.",
+  },
+];
+
+const uatDocumentDefinitions = [
+  {
+    projectCode: "UAT-VIAL-001",
+    code: "UAT-DOC-VIAL-PLANO-001",
+    title: "Plano de intervencion vial demo",
+    categoryCode: "PLANOS",
+    status: DocumentStatus.ACTIVE,
+    visibility: DocumentVisibility.PROJECT,
+  },
+  {
+    projectCode: "UAT-VIAL-001",
+    code: "UAT-DOC-VIAL-INF-001",
+    title: "Informe tecnico de compactacion demo",
+    categoryCode: "INFORMES_TECNICOS",
+    status: DocumentStatus.IN_REVIEW,
+    visibility: DocumentVisibility.PROJECT,
+  },
+  {
+    projectCode: "UAT-EDIF-002",
+    code: "UAT-DOC-EDIF-ACTA-001",
+    title: "Acta de liberacion parcial demo",
+    categoryCode: "ACTAS",
+    status: DocumentStatus.APPROVED,
+    visibility: DocumentVisibility.ORGANIZATION,
+  },
+];
+
+function dateOnly(date: string) {
+  return new Date(`${date}T00:00:00.000Z`);
+}
+
+function dateTime(date: string, hour = 8) {
+  return new Date(`${date}T${hour.toString().padStart(2, "0")}:00:00.000Z`);
+}
+
 async function seedBaseCatalogs() {
   console.log("Loading base catalogs...");
 
@@ -686,6 +861,511 @@ async function seedDemoData() {
   console.log("Demo data loaded.");
 }
 
+async function seedUatDemoData() {
+  console.log("Loading UAT demo data...");
+
+  const passwordHash = await bcrypt.hash(uatPassword, 10);
+
+  const organization = await prisma.organization.upsert({
+    where: {
+      nit: "900661000-1",
+    },
+    update: {
+      name: "Constructora UAT Demo S.A.S.",
+      email: "contacto.uat@bitacora.local",
+      phone: "6040000000",
+      status: "ACTIVE",
+    },
+    create: {
+      nit: "900661000-1",
+      name: "Constructora UAT Demo S.A.S.",
+      email: "contacto.uat@bitacora.local",
+      phone: "6040000000",
+      status: "ACTIVE",
+    },
+  });
+
+  const usersByEmail = new Map<string, { id: string; email: string }>();
+
+  for (const userDefinition of uatUserDefinitions) {
+    const user = await prisma.user.upsert({
+      where: {
+        email: userDefinition.email,
+      },
+      update: {
+        fullName: userDefinition.fullName,
+        phone: "3006610000",
+        documentType: "CC",
+        documentNumber: userDefinition.documentNumber,
+        passwordHash,
+        status: "ACTIVE",
+        blockedReason: null,
+      },
+      create: {
+        email: userDefinition.email,
+        fullName: userDefinition.fullName,
+        phone: "3006610000",
+        documentType: "CC",
+        documentNumber: userDefinition.documentNumber,
+        passwordHash,
+        status: "ACTIVE",
+      },
+      select: {
+        id: true,
+        email: true,
+      },
+    });
+
+    usersByEmail.set(user.email, user);
+  }
+
+  const roles = await prisma.role.findMany({
+    where: {
+      code: {
+        in: uatUserDefinitions.map((user) => user.roleCode),
+      },
+    },
+    select: {
+      id: true,
+      code: true,
+    },
+  });
+  const rolesByCode = new Map(roles.map((role) => [role.code, role]));
+
+  for (const roleCode of uatUserDefinitions.map((user) => user.roleCode)) {
+    if (!rolesByCode.has(roleCode)) {
+      throw new Error(`Role not found for UAT seed: ${roleCode}`);
+    }
+  }
+
+  const superAdmin = usersByEmail.get("uat.superadmin@bitacora.local");
+  const inspector = usersByEmail.get("uat.inspector@bitacora.local");
+  const supervisor = usersByEmail.get("uat.supervisor@bitacora.local");
+  const projectAdmin = usersByEmail.get("uat.projectadmin@bitacora.local");
+
+  if (!superAdmin || !inspector || !supervisor || !projectAdmin) {
+    throw new Error("Required UAT demo users were not created.");
+  }
+
+  const projectsByCode = new Map<string, { id: string; code: string }>();
+
+  for (const projectDefinition of uatProjects) {
+    const project = await prisma.project.upsert({
+      where: {
+        organizationId_code: {
+          organizationId: organization.id,
+          code: projectDefinition.code,
+        },
+      },
+      update: {
+        name: projectDefinition.name,
+        description: projectDefinition.description,
+        location: projectDefinition.location,
+        startDate: dateOnly(projectDefinition.startDate),
+        endDate: dateOnly(projectDefinition.endDate),
+        status: "ACTIVE",
+        updatedById: superAdmin.id,
+      },
+      create: {
+        organizationId: organization.id,
+        code: projectDefinition.code,
+        name: projectDefinition.name,
+        description: projectDefinition.description,
+        location: projectDefinition.location,
+        startDate: dateOnly(projectDefinition.startDate),
+        endDate: dateOnly(projectDefinition.endDate),
+        status: "ACTIVE",
+        createdById: superAdmin.id,
+        updatedById: superAdmin.id,
+      },
+      select: {
+        id: true,
+        code: true,
+      },
+    });
+
+    projectsByCode.set(project.code, project);
+  }
+
+  for (const project of projectsByCode.values()) {
+    for (const userDefinition of uatUserDefinitions) {
+      const user = usersByEmail.get(userDefinition.email);
+      const role = rolesByCode.get(userDefinition.roleCode);
+
+      if (!user || !role) {
+        throw new Error(`Invalid UAT assignment for ${userDefinition.email}`);
+      }
+
+      await prisma.projectUser.upsert({
+        where: {
+          projectId_userId_roleId: {
+            projectId: project.id,
+            userId: user.id,
+            roleId: role.id,
+          },
+        },
+        update: {
+          status: "ACTIVE",
+          assignedById: superAdmin.id,
+        },
+        create: {
+          projectId: project.id,
+          userId: user.id,
+          roleId: role.id,
+          assignedById: superAdmin.id,
+        },
+      });
+    }
+  }
+
+  const eventTypes = await prisma.eventType.findMany({
+    where: {
+      code: {
+        in: uatEventTemplates.map((event) => event.eventTypeCode),
+      },
+    },
+    select: {
+      id: true,
+      code: true,
+    },
+  });
+  const eventTypesByCode = new Map(
+    eventTypes.map((eventType) => [eventType.code, eventType]),
+  );
+
+  for (const dailyLogDefinition of uatDailyLogs) {
+    const project = projectsByCode.get(dailyLogDefinition.projectCode);
+
+    if (!project) {
+      throw new Error(
+        `Project not found for UAT daily log: ${dailyLogDefinition.projectCode}`,
+      );
+    }
+
+    const submittedAt =
+      dailyLogDefinition.status === DailyLogStatus.DRAFT
+        ? null
+        : dateTime(dailyLogDefinition.logDate, 16);
+    const approvedAt =
+      dailyLogDefinition.status === DailyLogStatus.APPROVED ||
+      dailyLogDefinition.status === DailyLogStatus.CLOSED
+      ? dateTime(dailyLogDefinition.logDate, 17)
+      : null;
+    const closedAt =
+      dailyLogDefinition.status === DailyLogStatus.CLOSED
+        ? dateTime(dailyLogDefinition.logDate, 18)
+        : null;
+
+    const dailyLog = await prisma.dailyLog.upsert({
+      where: {
+        projectId_logDate: {
+          projectId: project.id,
+          logDate: dateOnly(dailyLogDefinition.logDate),
+        },
+      },
+      update: {
+        status: dailyLogDefinition.status,
+        comments: dailyLogDefinition.comments,
+        submittedAt,
+        reviewedById:
+          dailyLogDefinition.status === DailyLogStatus.DRAFT
+            ? null
+            : supervisor.id,
+        reviewedAt: submittedAt,
+        approvedById: approvedAt ? projectAdmin.id : null,
+        approvedAt,
+        closedAt,
+        updatedById: supervisor.id,
+        responsibleNameSnapshot: inspector.id ? "UAT Inspector de Campo" : null,
+        approvedByNameSnapshot: approvedAt
+          ? "UAT Administrador de Proyecto"
+          : null,
+      },
+      create: {
+        projectId: project.id,
+        logDate: dateOnly(dailyLogDefinition.logDate),
+        status: dailyLogDefinition.status,
+        comments: dailyLogDefinition.comments,
+        submittedAt,
+        reviewedById:
+          dailyLogDefinition.status === DailyLogStatus.DRAFT
+            ? null
+            : supervisor.id,
+        reviewedAt: submittedAt,
+        approvedById: approvedAt ? projectAdmin.id : null,
+        approvedAt,
+        closedAt,
+        createdById: inspector.id,
+        updatedById: supervisor.id,
+        responsibleNameSnapshot: "UAT Inspector de Campo",
+        approvedByNameSnapshot: approvedAt
+          ? "UAT Administrador de Proyecto"
+          : null,
+      },
+    });
+
+    await seedUatStatusHistory(
+      dailyLog.id,
+      dailyLogDefinition.status,
+      supervisor.id,
+      dailyLogDefinition.logDate,
+    );
+
+    for (let index = 0; index < uatEventTemplates.length; index += 1) {
+      const template = uatEventTemplates[index];
+      const eventType = eventTypesByCode.get(template.eventTypeCode);
+
+      if (!eventType) {
+        throw new Error(`Event type not found: ${template.eventTypeCode}`);
+      }
+
+      const activity = `${template.activity} - ${dailyLogDefinition.projectCode}`;
+      const existingEvent = await prisma.dailyLogEvent.findFirst({
+        where: {
+          dailyLogId: dailyLog.id,
+          activity,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const eventData = {
+        eventTypeId: eventType.id,
+        activity,
+        executionDescription: template.executionDescription,
+        reportedById: inspector.id,
+        reportedAt: dateTime(dailyLogDefinition.logDate, 9 + index),
+      };
+
+      if (existingEvent) {
+        await prisma.dailyLogEvent.update({
+          where: {
+            id: existingEvent.id,
+          },
+          data: eventData,
+        });
+        continue;
+      }
+
+      await prisma.dailyLogEvent.create({
+        data: {
+          dailyLogId: dailyLog.id,
+          ...eventData,
+        },
+      });
+    }
+  }
+
+  console.log("UAT demo data loaded.");
+}
+
+async function seedUatStatusHistory(
+  dailyLogId: string,
+  status: DailyLogStatus,
+  changedById: string,
+  logDate: string,
+) {
+  await prisma.dailyLogStatusHistory.deleteMany({
+    where: {
+      dailyLogId,
+    },
+  });
+
+  const transitionsByStatus: Record<
+    DailyLogStatus,
+    Array<{ fromStatus: DailyLogStatus; toStatus: DailyLogStatus; hour: number }>
+  > = {
+    DRAFT: [],
+    IN_REVIEW: [
+      {
+        fromStatus: DailyLogStatus.DRAFT,
+        toStatus: DailyLogStatus.IN_REVIEW,
+        hour: 16,
+      },
+    ],
+    PENDING_REVIEW: [],
+    OBSERVED: [],
+    APPROVED: [
+      {
+        fromStatus: DailyLogStatus.DRAFT,
+        toStatus: DailyLogStatus.IN_REVIEW,
+        hour: 16,
+      },
+      {
+        fromStatus: DailyLogStatus.IN_REVIEW,
+        toStatus: DailyLogStatus.APPROVED,
+        hour: 17,
+      },
+    ],
+    REJECTED: [
+      {
+        fromStatus: DailyLogStatus.DRAFT,
+        toStatus: DailyLogStatus.IN_REVIEW,
+        hour: 16,
+      },
+      {
+        fromStatus: DailyLogStatus.IN_REVIEW,
+        toStatus: DailyLogStatus.REJECTED,
+        hour: 17,
+      },
+    ],
+    PDF_GENERATED: [],
+    SIGNED: [],
+    CLOSED: [
+      {
+        fromStatus: DailyLogStatus.DRAFT,
+        toStatus: DailyLogStatus.IN_REVIEW,
+        hour: 16,
+      },
+      {
+        fromStatus: DailyLogStatus.IN_REVIEW,
+        toStatus: DailyLogStatus.APPROVED,
+        hour: 17,
+      },
+      {
+        fromStatus: DailyLogStatus.APPROVED,
+        toStatus: DailyLogStatus.CLOSED,
+        hour: 18,
+      },
+    ],
+    VOIDED: [],
+  };
+
+  const transitions = transitionsByStatus[status];
+
+  if (transitions.length === 0) {
+    return;
+  }
+
+  await prisma.dailyLogStatusHistory.createMany({
+    data: transitions.map((transition) => ({
+      dailyLogId,
+      changedById,
+      fromStatus: transition.fromStatus,
+      toStatus: transition.toStatus,
+      comments: `Transicion demo UAT a ${transition.toStatus}`,
+      changedAt: dateTime(logDate, transition.hour),
+    })),
+  });
+}
+
+async function seedUatDemoDocuments() {
+  console.log("Loading UAT demo documents...");
+
+  const organization = await prisma.organization.findUnique({
+    where: {
+      nit: "900661000-1",
+    },
+    select: {
+      id: true,
+    },
+  });
+  const uploadedBy = await prisma.user.findUnique({
+    where: {
+      email: "uat.projectadmin@bitacora.local",
+    },
+    select: {
+      id: true,
+    },
+  });
+  const documentTypeCatalog = await prisma.documentTypeCatalog.findUnique({
+    where: {
+      code: "OTHER",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!organization || !uploadedBy || !documentTypeCatalog) {
+    throw new Error("Required UAT document seed dependencies were not found.");
+  }
+
+  for (const documentDefinition of uatDocumentDefinitions) {
+    const project = await prisma.project.findFirst({
+      where: {
+        organizationId: organization.id,
+        code: documentDefinition.projectCode,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!project) {
+      throw new Error(
+        `Project not found for UAT document: ${documentDefinition.projectCode}`,
+      );
+    }
+
+    const category = await prisma.documentCategory.findFirst({
+      where: {
+        organizationId: organization.id,
+        projectId: null,
+        code: documentDefinition.categoryCode,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!category) {
+      throw new Error(
+        `Document category not found for UAT seed: ${documentDefinition.categoryCode}`,
+      );
+    }
+
+    await prisma.document.upsert({
+      where: {
+        projectId_code: {
+          projectId: project.id,
+          code: documentDefinition.code,
+        },
+      },
+      update: {
+        categoryId: category.id,
+        title: documentDefinition.title,
+        description:
+          "Documento metadata-only para demostracion UAT. No contiene binario fisico.",
+        fileName: `${documentDefinition.code}.pending`,
+        storagePath: `pending://${documentDefinition.code}.pending`,
+        status: documentDefinition.status,
+        visibility: documentDefinition.visibility,
+        updatedById: uploadedBy.id,
+        deletedAt: null,
+        deletedById: null,
+      },
+      create: {
+        organizationId: organization.id,
+        projectId: project.id,
+        documentTypeId: documentTypeCatalog.id,
+        categoryId: category.id,
+        uploadedById: uploadedBy.id,
+        createdById: uploadedBy.id,
+        updatedById: uploadedBy.id,
+        code: documentDefinition.code,
+        type: DocumentType.OTRO,
+        title: documentDefinition.title,
+        description:
+          "Documento metadata-only para demostracion UAT. No contiene binario fisico.",
+        fileName: `${documentDefinition.code}.pending`,
+        storagePath: `pending://${documentDefinition.code}.pending`,
+        status: documentDefinition.status,
+        visibility: documentDefinition.visibility,
+        metadata: {
+          seed: "FASE_66_1_UAT",
+          binary: false,
+        },
+      },
+    });
+  }
+
+  console.log("UAT demo documents loaded.");
+}
+
 async function seedDocumentCategories() {
   console.log("Loading document categories...");
 
@@ -739,7 +1419,9 @@ async function main() {
 
   await seedBaseCatalogs();
   await seedDemoData();
+  await seedUatDemoData();
   await seedDocumentCategories();
+  await seedUatDemoDocuments();
 
   console.log("Seed finished successfully.");
 }
